@@ -25,11 +25,36 @@
   var map = L.map('map', {
     center: [35.681, 139.767], zoom: 12, maxZoom: 24, minZoom: 0,
     zoomSnap: 0.25, zoomDelta: 0.5, wheelPxPerZoomLevel: 90, wheelDebounceTime: 20,
-    preferCanvas: true, renderer: renderer, attributionControl: true, boxZoom: true
+    preferCanvas: true, renderer: renderer, attributionControl: true, boxZoom: true,
+    // 回転 (leaflet-rotate): 方位ボタンのドラッグ / Shift+ホイール / 右ドラッグ / 2本指
+    rotate: true, bearing: 0, rotateControl: { closeOnZeroBearing: false, position: 'topleft' }, shiftKeyRotate: true, touchRotate: true
   });
   map.attributionControl.setPrefix('MapDetector ' + VERSION);
   L.control.scale({ imperial: false, maxWidth: 160 }).addTo(map);
   S.ptLayer = L.layerGroup().addTo(map);
+
+  // ---- 回転: 右ボタン (または Ctrl+左ボタン) ドラッグで画面中心まわりに回転、ステータスバーで数値入力
+  function getBearing() { return map.getBearing ? map.getBearing() : 0; }
+  function setBearing(deg) { deg = ((deg % 360) + 360) % 360; map.setBearing(deg); }
+  (function () {
+    var el = map.getContainer(), rot = null;
+    function ang(ev) { var r = el.getBoundingClientRect(); return Math.atan2(ev.clientY - (r.top + r.height / 2), ev.clientX - (r.left + r.width / 2)) * 180 / Math.PI; }
+    el.addEventListener('contextmenu', function (ev) { if (rot && rot.moved) ev.preventDefault(); });
+    el.addEventListener('mousedown', function (ev) {
+      if (!(ev.button === 2 || (ev.button === 0 && ev.ctrlKey))) return;
+      rot = { a0: ang(ev), b0: getBearing(), moved: false };
+      if (ev.button === 0) { ev.preventDefault(); ev.stopPropagation(); map.dragging.disable(); }
+    }, true);
+    document.addEventListener('mousemove', function (ev) {
+      if (!rot) return;
+      var d = ang(ev) - rot.a0; if (Math.abs(d) > 1) rot.moved = true;
+      if (rot.moved) setBearing(rot.b0 + d);
+    });
+    document.addEventListener('mouseup', function () { if (rot) { map.dragging.enable(); setTimeout(function () { rot = null; }, 0); } });
+  })();
+  map.on('rotate', function () { var b = getBearing(); var inp = document.getElementById('numBearing'); if (inp && document.activeElement !== inp) inp.value = (Math.round(b * 10) / 10).toString(); if (!rotRaf) rotRaf = requestAnimationFrame(function () { rotRaf = 0; updateRouteLabels(); }); });
+  map.on('rotate', function () { markDirty(); });
+  var rotRaf = 0;
   var snapMarker = L.marker([0, 0], { interactive: false, keyboard: false, icon: L.divIcon({ className: '', iconSize: null }) });
   var centerMarker = L.marker([0, 0], { interactive: false, keyboard: false, icon: L.divIcon({ className: 'md-snap center', iconSize: null }) });
 
@@ -146,8 +171,8 @@
     for (var i = 0; i <= n; i++) { var a = a0 + da * i / n; out.push({ e: c.e + r * Math.cos(a), n: c.n + r * Math.sin(a) }); }
     return out;
   }
-  function shapesToLayers(shapes, style) {
-    style = style || {};
+  function shapesToLayers(shapes, style, rend, k, bearing) {
+    style = style || {}; rend = rend || renderer; k = k || 1; bearing = bearing || 0;
     var byColor = {}, group = L.featureGroup(), texts = [];
     function add(color, pts) { (byColor[color] = byColor[color] || []).push(pts.map(toLL)); }
     shapes.forEach(function (s) {
@@ -155,19 +180,19 @@
       if (s.type === 'polyline') { var p = s.pts; if (s.closed && p.length > 2) p = p.concat([p[0]]); if (p.length > 1) add(col, p); }
       else if (s.type === 'circle') add(col, arcPts(s.c, s.r, 0, Math.PI * 2));
       else if (s.type === 'arc') add(col, arcPts(s.c, s.r, s.a0, s.a1));
-      else if (s.type === 'point') L.circleMarker(toLL(s.p), { radius: 3, color: col, weight: 1, fillOpacity: 0.8, renderer: renderer, interactive: false }).addTo(group);
+      else if (s.type === 'point') L.circleMarker(toLL(s.p), { radius: 3 * k, color: col, weight: 1 * k, fillOpacity: 0.8, renderer: rend, interactive: false }).addTo(group);
       else if (s.type === 'text' && s.text) texts.push(s);
     });
     Object.keys(byColor).forEach(function (col) {
-      L.polyline(byColor[col], { color: col, weight: style.weight || 1.2, opacity: style.opacity || 0.95, renderer: renderer, interactive: false, smoothFactor: 0.5 }).addTo(group);
+      L.polyline(byColor[col], { color: col, weight: (style.weight || 1.2) * k, opacity: style.opacity || 0.95, renderer: rend, interactive: false, smoothFactor: 0.5 }).addTo(group);
     });
     var textLayer = null;
     if (texts.length) {
       textLayer = L.layerGroup();
       texts.slice(0, 5000).forEach(function (t) {
-        var rot = -(t.rot || 0) * 180 / Math.PI;
+        var rot = -(t.rot || 0) * 180 / Math.PI + bearing;
         L.marker(toLL(t.p), { interactive: false, keyboard: false, icon: L.divIcon({ className: '', iconSize: null,
-          html: '<div class="md-text" style="transform: translate(0,-100%) rotate(' + rot + 'deg); transform-origin: 0 100%; color:' + esc(t.color || '#111') + '">' + esc(t.text) + '</div>' }) }).addTo(textLayer);
+          html: '<div class="md-text" style="transform: translate(0,-100%) rotate(' + rot + 'deg); transform-origin: 0 100%; color:' + esc(t.color || '#111') + (k !== 1 ? ';font-size:' + (11 * k).toFixed(1) + 'px' : '') + '">' + esc(t.text) + '</div>' }) }).addTo(textLayer);
       });
     }
     return { layer: group, textLayer: textLayer };
@@ -454,12 +479,7 @@
     }
     R.al = al; R.stations = st; R.bones = bones; R.pitch = pitch;
 
-    var g = L.featureGroup(), shapes = [];
-    function pl(pts, opt) { return L.polyline(pts.map(toLL), L.extend({ renderer: renderer, interactive: false }, opt)).addTo(g); }
-    if ($('chkIpLine').checked) {
-      pl(R.ips, { color: '#64748b', weight: 1, dashArray: '6 4' });
-      R.ips.forEach(function (p) { L.circleMarker(toLL(p), { radius: 3.5, color: '#475569', weight: 1, fillColor: '#fff', fillOpacity: 1, renderer: renderer, interactive: false }).addTo(g); });
-    }
+    var shapes = [], D = { ips: $('chkIpLine').checked ? R.ips.slice() : null, cl: null, ol: null, or: null, mainB: [], keyB: [], subB: [] };
     R.ips.forEach(function (p) { shapes.push({ type: 'point', p: { e: p.e, n: p.n }, name: p.name, layer: 'IP' }); });
     // 中心線: 要素ごとに正確な形状でスナップ登録
     al.elements.forEach(function (el) {
@@ -476,25 +496,19 @@
         shapes.push({ type: 'polyline', pts: pts, closed: false, noVertexSnap: true, layer: 'CL' });
       }
     });
-    var cl = MD.Alignment.sample(al, 1);
-    pl(cl, { color: '#dc2626', weight: 2 });
+    D.cl = MD.Alignment.sample(al, 1);
     if ($('chkEdges').checked) {
       var wl = +$('numLeft').value || 0, wr = +$('numRight').value || 0;
-      if (wl > 0) { var ol = MD.Alignment.offset(al, wl, 1); pl(ol, { color: '#2563eb', weight: 1.2 }); shapes.push({ type: 'polyline', pts: ol, closed: false, noVertexSnap: true, layer: 'EDGE' }); }
-      if (wr > 0) { var or = MD.Alignment.offset(al, -wr, 1); pl(or, { color: '#2563eb', weight: 1.2 }); shapes.push({ type: 'polyline', pts: or, closed: false, noVertexSnap: true, layer: 'EDGE' }); }
+      if (wl > 0) { var ol = D.ol = MD.Alignment.offset(al, wl, 1); shapes.push({ type: 'polyline', pts: ol, closed: false, noVertexSnap: true, layer: 'EDGE' }); }
+      if (wr > 0) { var or = D.or = MD.Alignment.offset(al, -wr, 1); shapes.push({ type: 'polyline', pts: or, closed: false, noVertexSnap: true, layer: 'EDGE' }); }
     }
-    var mainB = [], keyB = [], subB = [];
     bones.forEach(function (b) {
-      var line = [toLL(b.l), toLL(b.r)];
-      (b.station.kind === 'key' ? keyB : b.station.kind === 'sub' ? subB : mainB).push(line);
+      (b.station.kind === 'key' ? D.keyB : b.station.kind === 'sub' ? D.subB : D.mainB).push([b.l, b.r]);
       shapes.push({ type: 'polyline', pts: [b.l, b.c, b.r], closed: false, layer: 'BONE' });
     });
-    if (subB.length) L.polyline(subB, { color: '#16a34a', weight: 0.8, opacity: 0.7, dashArray: '3 3', renderer: renderer, interactive: false }).addTo(g);
-    if (mainB.length) L.polyline(mainB, { color: '#16a34a', weight: 1.4, renderer: renderer, interactive: false }).addTo(g);
-    if (keyB.length) L.polyline(keyB, { color: '#dc2626', weight: 1.4, renderer: renderer, interactive: false }).addTo(g);
     al.keyPoints.forEach(function (k) { var q = MD.Alignment.pointAt(al, k.s); shapes.push({ type: 'point', p: { e: q.e, n: q.n }, name: k.name, layer: 'KEY' }); });
-    g.addTo(map);
-    R.layer = g;
+    R.draw = D;
+    R.layer = drawRoute(D, renderer).addTo(map);
     S.snap.setGroup('route', shapes);
 
     updateRouteLabels();
@@ -520,27 +534,50 @@
     $('alignInfo').textContent = '延長 ' + al.length.toFixed(3) + ' m / 測点 ' + st.length + (srcRoute && srcRoute.customStations ? ' (表で編集中)' : '') + ' / 主要点 ' + al.keyPoints.length + chk + (w.length ? '\n⚠ ' + w.join('\n⚠ ') : '');
     refreshPoints();
   }
-  // 測点ラベル (横断線方向に回転)。ズームに応じて間引き (主要点は常に表示)
-  function updateRouteLabels() {
-    var R = S.route;
-    if (R.labelLayer) { R.labelLayer.remove(); R.labelLayer = null; }
-    if (!R.bones.length || !$('chkLabels').checked || map.getZoom() < (+$('numLabelZoom').value || 0)) return;
-    var c0 = toLL(R.bones[0].c), px = R.pitch / metersPerPixel(c0.lat);
-    var every = Math.max(1, Math.ceil(16 / Math.max(px, 0.01)));
+  /** 線形の描画 (メイン画面・印刷で共用)。D: rebuildRoute が作る描画データ (平面座標) */
+  function drawRoute(D, rend, k) {
+    k = k || 1;   // 線幅の倍率 (印刷用)
+    var g = L.featureGroup(), o = { renderer: rend, interactive: false };
+    function pl(pts, opt) { return L.polyline(pts.map(toLL), L.extend({}, o, opt)).addTo(g); }
+    function multi(arr, opt) { if (arr.length) L.polyline(arr.map(function (ln) { return ln.map(toLL); }), L.extend({}, o, opt)).addTo(g); }
+    if (D.ips) {
+      pl(D.ips, { color: '#64748b', weight: 1 * k, dashArray: (6 * k) + ' ' + (4 * k) });
+      D.ips.forEach(function (p) { L.circleMarker(toLL(p), L.extend({}, o, { radius: 3.5 * k, color: '#475569', weight: 1 * k, fillColor: '#fff', fillOpacity: 1 })).addTo(g); });
+    }
+    if (D.cl) pl(D.cl, { color: '#dc2626', weight: 2 * k });
+    if (D.ol) pl(D.ol, { color: '#2563eb', weight: 1.2 * k });
+    if (D.or) pl(D.or, { color: '#2563eb', weight: 1.2 * k });
+    multi(D.subB, { color: '#16a34a', weight: 0.8 * k, opacity: 0.7, dashArray: (3 * k) + ' ' + (3 * k) });
+    multi(D.mainB, { color: '#16a34a', weight: 1.4 * k });
+    multi(D.keyB, { color: '#dc2626', weight: 1.4 * k });
+    return g;
+  }
+  /** 測点ラベル: 横断線方向に回転、表示縮尺に応じて間引き (主要点は重ならない範囲で表示) */
+  function routeLabelLayer(mpp, bearing, scaleK) {
+    var R = S.route, k = scaleK || 1;
+    var px = R.pitch / mpp;
+    var every = Math.max(1, Math.ceil(16 * k / Math.max(px, 0.01)));
     var nice = [1, 2, 5, 10, 25, 50, 100, 250, 500, 1000]; every = nice.find(function (v) { return v >= every; }) || every;
     var lab = L.layerGroup(), keyPx = -1e9;
     R.bones.forEach(function (b) {
       var st = b.station, key = st.kind === 'key';
       if (st.kind === 'sub') return;
-      if (!key) { var k = Math.round((st.chainage) / R.pitch); if (k % every) return; }
-      else { var sp = b.station.s / metersPerPixel(c0.lat); if (sp - keyPx < 12) return; keyPx = sp; }
-      var raw = -(b.h + Math.PI / 2) * 180 / Math.PI;    // 横断線(左向き)の画面角
+      if (!key) { var kk = Math.round((st.chainage) / R.pitch); if (kk % every) return; }
+      else { var sp = b.station.s / mpp; if (sp - keyPx < 12 * k) return; keyPx = sp; }
+      var raw = -(b.h + Math.PI / 2) * 180 / Math.PI + bearing;
       raw = ((raw % 360) + 360) % 360;
       var flip = raw > 90 && raw < 270, ang = flip ? raw - 180 : raw;
       L.marker(toLL(b.l), { interactive: false, keyboard: false, icon: L.divIcon({ className: '', iconSize: null,
-        html: '<div class="md-sta-rot" style="transform: rotate(' + ang.toFixed(1) + 'deg)"><div class="md-sta-label' + (key ? ' md-key-label' : '') + (flip ? ' flip' : '') + '">' + esc(st.label) + '</div></div>' }) }).addTo(lab);
+        html: '<div class="md-sta-rot" style="transform: rotate(' + ang.toFixed(1) + 'deg)"><div class="md-sta-label' + (key ? ' md-key-label' : '') + (flip ? ' flip' : '') + '"' + (k !== 1 ? ' style="font-size:' + (11 * k).toFixed(1) + 'px"' : '') + '>' + esc(st.label) + '</div></div>' }) }).addTo(lab);
     });
-    R.labelLayer = lab.addTo(map);
+    return lab;
+  }
+  // 測点ラベル (横断線方向に回転)。ズームに応じて間引き (主要点は常に表示)
+  function updateRouteLabels() {
+    var R = S.route;
+    if (R.labelLayer) { R.labelLayer.remove(); R.labelLayer = null; }
+    if (!R.bones.length || !$('chkLabels').checked || map.getZoom() < (+$('numLabelZoom').value || 0)) return;
+    R.labelLayer = routeLabelLayer(metersPerPixel(toLL(R.bones[0].c).lat), getBearing()).addTo(map);
   }
   function fitRoute() { if (S.route.layer) map.fitBounds(S.route.layer.getBounds(), { padding: [30, 30], maxZoom: 19 }); }
 
@@ -613,6 +650,8 @@
   });
   map.on('zoomend', function () { $('stZoom').textContent = 'Z ' + map.getZoom().toFixed(2); });
   $('stZoom').textContent = 'Z ' + map.getZoom().toFixed(2);
+  $('numBearing').onchange = function () { setBearing(+this.value || 0); markDirty(); };
+  $('btnNorth').onclick = function () { setBearing(0); markDirty(); };
 
   function addPoint(p, kind, snapName) {
     var no = S.points.length ? S.points[S.points.length - 1].no + 1 : 1;
@@ -871,7 +910,7 @@
     var ui = {}; UI_IDS.forEach(function (id) { ui[id] = uiValue(id); });
     return {
       app: 'MapDetector', format: 1, version: VERSION, savedAt: new Date().toISOString(),
-      view: { center: [c.lat, c.lng], zoom: map.getZoom() },
+      view: { center: [c.lat, c.lng], zoom: map.getZoom(), bearing: getBearing() },
       zone: S.zone, base: $('selBase').value, panelHidden: $('panel').classList.contains('hidden'),
       tile: S.tile ? { name: S.tile.name, path: S.tile.opened.kind === 'electron' ? tileInfo.root : null, tms: $('chkTms').checked, opacity: +$('rngTileOpacity').value } : null,
       overlays: S.overlays.filter(function (o) { return o.src; }).map(function (o) {
@@ -943,7 +982,7 @@
       // 取得点
       S.points = (pj.points || []).map(function (p) { return { no: p.no, name: p.name, e: p.e, n: p.n, z: p.z || 0, kind: p.kind || 'raw', ref: p.ref || '' }; });
       refreshPoints();
-      if (pj.view) map.setView(pj.view.center, pj.view.zoom, { animate: false });
+      if (pj.view) { map.setView(pj.view.center, pj.view.zoom, { animate: false }); setBearing(pj.view.bearing || 0); }
       map.invalidateSize();
     } finally { S.restoring = false; }
     return warn;
@@ -1005,8 +1044,179 @@
   }
   window.addEventListener('beforeunload', function (e) { if (!N && PROJ.dirty) { e.preventDefault(); e.returnValue = ''; } });
 
+  // ---------------- 印刷 (用紙 → 枠を配置 → レイヤー → ズーム → 回転 → 方位図/縮尺バー自動 → 印刷) ----------------
+  var PAPERS = { A4: [297, 210], A3: [420, 297], A2: [594, 420], A1: [841, 594], A0: [1189, 841] };
+  var PR = { open: false, frame: null, center: null, drag: null };
+  function prOpt() {
+    var sz = PAPERS[$('prPaper').value], land = $('prOrient').value === 'land';
+    var W = land ? sz[0] : sz[1], H = land ? sz[1] : sz[0], m = +$('prMargin').value || 0, foot = 9;
+    var dpi = +$('prDpi').value || 150, z = +$('prZoom').value;
+    var bearing = $('prRotNorth').checked ? 0 : getBearing();
+    var mapW = W - 2 * m, mapH = H - 2 * m - foot;   // mm (地図部分)
+    return { paper: $('prPaper').value, W: W, H: H, m: m, foot: foot, dpi: dpi, z: z, bearing: bearing, mapW: mapW, mapH: mapH,
+      pxW: Math.round(mapW / 25.4 * dpi), pxH: Math.round(mapH / 25.4 * dpi) };
+  }
+  function prMpp(lat, z) { return 40075016.686 * Math.cos(lat * Math.PI / 180) / (256 * Math.pow(2, z)); }
+  function prScale(o, lat) { return prMpp(lat, o.z) * o.dpi / 0.0254; }
+  // 用紙枠 (印刷地図と同じ投影・回転で 4 隅を計算)
+  function prCorners(o, c) {
+    var cp = map.project(c, o.z), t = o.bearing * Math.PI / 180, out = [];
+    [[-1, -1], [1, -1], [1, 1], [-1, 1]].forEach(function (s) {
+      var x = s[0] * o.pxW / 2, y = s[1] * o.pxH / 2;
+      // 画面座標 (右, 下) → 世界ピクセル: 地図を bearing だけ時計回りに回した表示に合わせて逆回転
+      var wx = x * Math.cos(-t) - y * Math.sin(-t), wy = x * Math.sin(-t) + y * Math.cos(-t);
+      out.push(map.unproject(cp.add(L.point(wx, wy)), o.z));
+    });
+    return out;
+  }
+  function prUpdate() {
+    if (!PR.open) return;
+    var o = prOpt(), c = PR.center || map.getCenter();
+    PR.center = c;
+    var cs = prCorners(o, c);
+    if (!PR.frame) {
+      PR.frame = L.polygon(cs, { color: '#ea580c', weight: 2, dashArray: '8 4', fillColor: '#fb923c', fillOpacity: 0.08, interactive: true, bubblingMouseEvents: false, className: 'md-print-frame' }).addTo(map);
+      PR.frame.on('mousedown', function (e) {
+        L.DomEvent.stop(e); map.dragging.disable();
+        PR.drag = { start: e.latlng, c0: PR.center };
+      });
+    } else PR.frame.setLatLngs(cs);
+    var den = prScale(o, c.lat), gw = o.pxW * prMpp(c.lat, o.z), gh = o.pxH * prMpp(c.lat, o.z);
+    $('prInfo').textContent = '縮尺 約 1:' + Math.round(den).toLocaleString() + ' / 範囲 ' + gw.toFixed(0) + ' m × ' + gh.toFixed(0) + ' m / 回転 ' + o.bearing.toFixed(1) + '°' +
+      ' / 画像 ' + o.pxW + '×' + o.pxH + ' px';
+  }
+  map.on('mousemove', function (e) {
+    if (!PR.drag) return;
+    var d = PR.drag, a = map.project(d.start, 20), b = map.project(e.latlng, 20), c0 = map.project(d.c0, 20);
+    PR.center = map.unproject(c0.add(b.subtract(a)), 20); prUpdate();
+  });
+  document.addEventListener('mouseup', function () { if (PR.drag) { PR.drag = null; map.dragging.enable(); } });
+  map.on('rotate', function () { if (PR.open && !$('prRotNorth').checked) prUpdate(); });
+
+  function prLayerDefs() {
+    var defs = [];
+    if (S.tile) defs.push({ id: 'tile', label: 'タイル (' + S.tile.name + ')', on: true, build: function (pm) {
+      var lay = MD.Tiles.createLayer(S.tile.opened, $('chkTms').checked); lay.options.keepBuffer = 0; lay.setOpacity(+$('rngTileOpacity').value); return lay; } });
+    if (S.base) defs.push({ id: 'base', label: '背景地図 (' + $('selBase').selectedOptions[0].textContent + ')', on: true, build: function () {
+      var b = BASES[$('selBase').value]; return L.tileLayer(b[0], { maxNativeZoom: b[1], maxZoom: 24, keepBuffer: 0 }); } });
+    S.overlays.forEach(function (o) {
+      defs.push({ id: o.id, label: o.name, on: o.visible, build: function (pm, rend, k, bearing) {
+        if (o.kind === 'image') return new MD.AffineImage(o.url, o.layer.getCorners(), { opacity: o.layer.options.opacity, editable: false });
+        if (o.kind === 'geojson') return L.geoJSON(o.geo, { style: { color: o.color, weight: 1.5 * k }, pointToLayer: function (f, ll) { return L.circleMarker(ll, { radius: 3 * k, renderer: rend }); }, interactive: false, renderer: rend });
+        var r = shapesToLayers(o.shapes, o.color ? { color: o.color } : null, rend, k, bearing);
+        var g = L.featureGroup([r.layer]); if (r.textLayer && $('prTexts').checked) g.addLayer(r.textLayer); return g;
+      } });
+    });
+    if (S.route.draw) {
+      defs.push({ id: 'route', label: '線形 (中心線・幅員線・横断線)', on: true, build: function (pm, rend, k) { return drawRoute(S.route.draw, rend, k); } });
+      defs.push({ id: 'routeLabels', label: '測点名', on: $('chkLabels').checked, build: function (pm, rend, k, bearing, mpp) { return routeLabelLayer(mpp, bearing, k); } });
+    }
+    if (S.points.length) defs.push({ id: 'points', label: '取得点 (' + S.points.length + '点)', on: true, build: function (pm, rend, k) {
+      var g = L.featureGroup();
+      S.points.forEach(function (p) {
+        var ll = toLL(p);
+        L.circleMarker(ll, { radius: 3.5 * k, color: '#dc2626', weight: 2 * k, fillColor: '#fff', fillOpacity: 1, renderer: rend, interactive: false }).addTo(g);
+        L.marker(ll, { interactive: false, icon: L.divIcon({ className: '', iconSize: null, html: '<div class="md-pt" style="font-size:' + (10 * k).toFixed(1) + 'px;line-height:' + (16 * k).toFixed(1) + 'px;border-radius:' + (9 * k) + 'px">' + esc(p.name) + '</div>' }) }).addTo(g);
+      });
+      return g;
+    } });
+    return defs;
+  }
+  function openPrint() {
+    PR.open = true; $('printPanel').hidden = false;
+    // ズームレベル候補: タイルのネイティブ範囲 (既定は最大)。タイルがなければ現在のズーム付近
+    var sel = $('prZoom'), lv = S.tile ? (S.tile.opened.info || S.tile.opened.det).levels : null;
+    var zmin = lv ? lv[0] : Math.max(0, Math.floor(map.getZoom()) - 4), zmax = lv ? lv[lv.length - 1] : Math.min(20, Math.ceil(map.getZoom()) + 2);
+    var prev = sel.value; sel.innerHTML = '';
+    for (var z = zmax; z >= zmin; z--) { var op = document.createElement('option'); op.value = z; op.textContent = z + (z === zmax ? ' (最大)' : ''); sel.appendChild(op); }
+    sel.value = prev && +prev >= zmin && +prev <= zmax ? prev : zmax;
+    $('prRotKeep').nextSibling.textContent = ' 表示角のまま (' + getBearing().toFixed(1) + '°)';
+    var ul = $('prLayers'); ul.innerHTML = '';
+    PR.defs = prLayerDefs();
+    PR.defs.forEach(function (d) {
+      var li = document.createElement('label'); li.className = 'pr-layer';
+      li.innerHTML = '<input type="checkbox"' + (d.on ? ' checked' : '') + '> ' + esc(d.label);
+      li.firstChild.onchange = function () { d.on = this.checked; };
+      ul.appendChild(li);
+    });
+    if (!PR.center) PR.center = map.getCenter();
+    prUpdate();
+    // 枠が画面に収まるよう表示
+    try { map.fitBounds(PR.frame.getBounds(), { padding: [40, 40], animate: false }); } catch (e) { /* empty */ }
+  }
+  function closePrint() {
+    PR.open = false; $('printPanel').hidden = true;
+    if (PR.frame) { PR.frame.remove(); PR.frame = null; }
+  }
+  ['prPaper', 'prOrient', 'prDpi', 'prMargin', 'prZoom', 'prRotKeep', 'prRotNorth'].forEach(function (id) { $(id).addEventListener('change', function () {
+    prUpdate();
+    // 枠がはみ出したら全体が見えるように表示を合わせる
+    try { var fb = PR.frame.getBounds(); if (!map.getBounds().contains(fb)) map.fitBounds(fb, { padding: [40, 40], animate: false }); } catch (e) { /* empty */ }
+  }); });
+  $('prCenter').onclick = function () { PR.center = map.getCenter(); prUpdate(); };
+  $('prClose').onclick = closePrint;
+  $('prGo').onclick = function () { doPrint(); };
+
+  function niceLen(x) { var p = Math.pow(10, Math.floor(Math.log10(x))), f = x / p; return (f >= 5 ? 5 : f >= 2.5 ? 2.5 : f >= 2 ? 2 : 1) * p; }
+  async function doPrint() {
+    var o = prOpt(), c = PR.center, k = o.dpi / 96;
+    var sheet = $('printSheet'); sheet.innerHTML = '';
+    // 用紙サイズ (@page)
+    var st = $('printPageStyle'); st.textContent = '@page { size: ' + o.W + 'mm ' + o.H + 'mm; margin: 0; }';
+    sheet.style.width = o.W + 'mm'; sheet.style.height = o.H + 'mm';
+    var inner = document.createElement('div'); inner.className = 'ps-inner';
+    inner.style.cssText = 'left:' + o.m + 'mm;top:' + o.m + 'mm;width:' + (o.W - 2 * o.m) + 'mm;height:' + (o.H - 2 * o.m) + 'mm';
+    sheet.appendChild(inner);
+    var box = document.createElement('div'); box.className = 'ps-mapbox'; box.style.cssText = 'width:' + o.mapW + 'mm;height:' + o.mapH + 'mm'; inner.appendChild(box);
+    var mdiv = document.createElement('div'); mdiv.className = 'ps-map';
+    mdiv.style.cssText = 'width:' + o.pxW + 'px;height:' + o.pxH + 'px;transform:scale(' + (96 / o.dpi) + ');transform-origin:0 0';
+    box.appendChild(mdiv);
+    $('printStage').hidden = false;
+    toast('印刷用の地図を準備中…', 60000);
+    var prend = L.canvas({ padding: 0.1 });
+    var pm = L.map(mdiv, { zoomControl: false, attributionControl: false, zoomAnimation: false, fadeAnimation: false, markerZoomAnimation: false, inertia: false,
+      dragging: false, scrollWheelZoom: false, doubleClickZoom: false, boxZoom: false, keyboard: false, touchZoom: false,
+      zoomSnap: 0, maxZoom: 24, minZoom: 0, preferCanvas: true, renderer: prend, rotate: true, bearing: o.bearing, rotateControl: false, shiftKeyRotate: false, touchRotate: false });
+    pm.setView(c, o.z, { animate: false });
+    if (pm.setBearing) pm.setBearing(o.bearing);
+    var mpp = prMpp(c.lat, o.z);
+    var waits = [];
+    PR.defs.forEach(function (d) {
+      if (!d.on) return;
+      var lay = d.build(pm, prend, k, o.bearing, mpp);
+      PR.lastMap = pm;
+      if (!lay) return;
+      if (lay instanceof L.GridLayer) waits.push(new Promise(function (res) { lay.once('load', res); setTimeout(res, 45000); }));
+      lay.addTo(pm);
+    });
+    await Promise.all(waits);
+    await new Promise(function (r) { setTimeout(r, 300); });
+    // 方位図: 印刷地図上で北の向きを実測して回転
+    var p0 = pm.latLngToContainerPoint(c), p1 = pm.latLngToContainerPoint([c.lat + 0.001, c.lng]);
+    var northDeg = Math.atan2(p1.x - p0.x, -(p1.y - p0.y)) * 180 / Math.PI;
+    var deco = '';
+    if ($('prDeco').checked) {
+      deco += '<div class="ps-north"><svg viewBox="0 0 40 60" width="12mm" height="18mm"><g transform="rotate(' + northDeg.toFixed(2) + ' 20 26)"><polygon points="20,2 32,44 20,36 8,44" fill="#111"/><polygon points="20,2 8,44 20,36" fill="#fff" stroke="#111" stroke-width="1.2"/></g><text x="20" y="58" text-anchor="middle" font-size="13" font-family="sans-serif" font-weight="700">N</text></svg></div>';
+      var den = prScale(o, c.lat), target = 60 / 1000 * den, L1 = niceLen(target), mmLen = L1 / den * 1000;
+      var segs = ''; for (var i = 0; i < 4; i++) segs += '<div class="ps-seg' + (i % 2 ? ' w' : '') + '" style="width:' + (mmLen / 4) + 'mm"></div>';
+      var unit = function (v) { return v >= 1000 ? (v / 1000) + ' km' : v + ' m'; };
+      deco += '<div class="ps-scale"><div class="ps-bar">' + segs + '</div><div class="ps-ticks" style="width:' + mmLen + 'mm"><span>0</span><span>' + unit(L1 / 2) + '</span><span>' + unit(L1) + '</span></div><div class="ps-den">縮尺 1:' + Math.round(den).toLocaleString() + '</div></div>';
+    }
+    var decoDiv = document.createElement('div'); decoDiv.className = 'ps-deco'; decoDiv.innerHTML = deco; box.appendChild(decoDiv);
+    var foot = document.createElement('div'); foot.className = 'ps-foot'; foot.style.height = o.foot + 'mm';
+    var now = new Date();
+    foot.innerHTML = '<span class="ps-title">' + esc($('prTitle').value || PROJ.name || '') + '</span><span>' + 'JGD2011 平面直角座標 ' + ROMAN[S.zone] + '系' + '</span><span>縮尺 1:' + Math.round(prScale(o, c.lat)).toLocaleString() + ' (' + o.paper + ')</span><span>' + now.getFullYear() + '/' + (now.getMonth() + 1) + '/' + now.getDate() + '</span><span>MapDetector ' + VERSION + '</span>';
+    inner.appendChild(foot);
+    $('toast').hidden = true;
+    var cleanup = function () { window.removeEventListener('afterprint', cleanup); try { pm.remove(); } catch (e) { /* empty */ } sheet.innerHTML = ''; $('printStage').hidden = true; st.textContent = ''; };
+    window.addEventListener('afterprint', cleanup);
+    document.body.classList.add('printing');
+    setTimeout(function () { window.print(); document.body.classList.remove('printing'); if (!PR.keepStage) setTimeout(cleanup, 500); }, 50);
+  }
+
   // ---------------- メニュー ----------------
   var ACTIONS = {
+    'file.print': function () { if (PR.open) closePrint(); else openPrint(); },
     'file.new': newProject, 'file.openProject': openProject,
     'file.save': function () { saveProject(false); }, 'file.saveAs': function () { saveProject(true); },
     'file.saveThenClose': async function () { if (await saveProject(false) && N && N.closeWindow) N.closeWindow(); },
@@ -1115,5 +1325,5 @@
   })();
 
   // デバッグ/テスト用
-  window.MDApp = { DOCK: DOCK, serializeProject: serializeProject, applyProject: applyProject, saveProject: saveProject, PROJ: PROJ, S: S, map: map, loadDrawing: loadDrawing, loadSima: loadSima, addPoint: addPoint, setZone: setZone, setTiles: setTiles, computeSnap: computeSnap, rebuildRoute: rebuildRoute };
+  window.MDApp = { PR: PR, openPrint: openPrint, doPrint: doPrint, prOpt: prOpt, DOCK: DOCK, serializeProject: serializeProject, applyProject: applyProject, saveProject: saveProject, PROJ: PROJ, S: S, map: map, loadDrawing: loadDrawing, loadSima: loadSima, addPoint: addPoint, setZone: setZone, setTiles: setTiles, computeSnap: computeSnap, rebuildRoute: rebuildRoute };
 })();

@@ -105,3 +105,45 @@ dialog.about button { margin-top: 12px; min-width: 96px; }
 #dockButtons { display: flex; gap: 6px; }
 #dockGrid { flex: 1; min-height: 0; overflow: hidden; }
 .md-hl { width: 22px; height: 22px; margin: -11px 0 0 -11px; border: 3px solid #f59e0b; border-radius: 50%; box-shadow: 0 0 0 3px rgba(245,158,11,.35); pointer-events: none; }
+
+.st-rot { display: inline-flex; align-items: center; gap: 4px; }
+.st-rot input { width: 56px; font: inherit; font-size: 11px; padding: 0 2px; background: #374151; color: #fff; border: 1px solid #4b5563; border-radius: 3px; }
+.st-rot button { font-size: 11px; padding: 0 6px; background: #374151; color: #fff; border-color: #4b5563; }
+
+/* 印刷パネル */
+.print-panel { position: fixed; top: 40px; right: 396px; width: 360px; z-index: 2500; background: #fff; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,.18); padding: 10px 12px; font-size: 12px; max-height: calc(100vh - 80px); overflow: auto; }
+.print-panel[hidden] { display: none; }
+.print-panel h3 { margin: 0 0 6px; font-size: 14px; }
+.pr-step { padding: 5px 0; border-top: 1px dashed var(--line); display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.pr-step > b { width: 100%; color: var(--muted); font-size: 11px; }
+.pr-layers { width: 100%; display: flex; flex-direction: column; gap: 2px; }
+.pr-layer { display: block; }
+#prTitle { width: 100%; font: inherit; }
+.pr-buttons { justify-content: flex-end; }
+button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.md-print-frame { cursor: move; }
+
+/* 印刷用シート (画面外で描画し、印刷時だけ表示) */
+#printStage { position: fixed; left: -20000px; top: 0; }
+#printStage[hidden] { display: block !important; visibility: hidden; }
+#printSheet { position: relative; background: #fff; overflow: hidden; }
+.ps-inner { position: absolute; display: flex; flex-direction: column; border: 0.4mm solid #111; box-sizing: border-box; }
+.ps-mapbox { position: relative; overflow: hidden; flex: none; }
+.ps-map { position: absolute; left: 0; top: 0; background: #fff; }
+.ps-map .leaflet-control-container { display: none; }
+.ps-deco { position: absolute; inset: 0; pointer-events: none; }
+.ps-north { position: absolute; right: 6mm; top: 5mm; width: 12mm; height: 18mm; background: rgba(255,255,255,.85); border-radius: 2mm; padding: 1mm; box-sizing: content-box; }
+.ps-scale { position: absolute; left: 6mm; bottom: 5mm; background: rgba(255,255,255,.9); padding: 1.5mm 3mm 1mm; border-radius: 1.5mm; font: 3mm/1.2 sans-serif; color: #111; }
+.ps-bar { display: flex; height: 1.6mm; border: 0.25mm solid #111; width: max-content; }
+.ps-seg { height: 100%; background: #111; }
+.ps-seg.w { background: #fff; }
+.ps-ticks { display: flex; justify-content: space-between; margin: 0.5mm -2mm 0; font-size: 2.6mm; }
+.ps-den { font-size: 2.8mm; margin-top: 0.5mm; font-weight: 600; }
+.ps-foot { flex: none; display: flex; align-items: center; gap: 6mm; padding: 0 3mm; border-top: 0.3mm solid #111; font: 3mm sans-serif; color: #111; box-sizing: border-box; }
+.ps-foot .ps-title { font-weight: 700; font-size: 3.6mm; flex: 1; }
+@media print {
+  html, body { height: auto; background: #fff; }
+  body > *:not(#printStage) { display: none !important; }
+  #printStage { position: static !important; left: 0 !important; visibility: visible !important; display: block !important; }
+  #printSheet { page-break-after: avoid; }
+}
