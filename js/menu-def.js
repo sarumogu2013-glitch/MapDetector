@@ -17,6 +17,7 @@
       { id: 'file.exportCsv', label: '取得座標をCSV出力...', accel: 'CmdOrCtrl+E' },
       { id: 'file.exportSima', label: '取得座標をSIMA出力...' },
       { id: 'file.exportStations', label: '横断線(測点)座標をCSV出力...' },
+      { id: 'file.exportDxf', label: '計測・取得点をDXF出力...' },
       { type: 'separator' },
       { id: 'file.printPreview', label: '印刷プレビュー...' },
       { id: 'file.print', label: '印刷 (範囲を指定)...', accel: 'CmdOrCtrl+P' },
@@ -52,6 +53,11 @@
       { id: 'tool.pick', label: '座標取得モード', accel: 'P' },
       { id: 'tool.pan', label: '移動モード', accel: 'Escape' },
       { id: 'tool.snapToggle', label: 'スナップ ON/OFF', accel: 'F3' },
+      { type: 'separator' },
+      { id: 'tool.dist', label: '距離を計測', accel: 'D' },
+      { id: 'tool.area', label: '面積を計測', accel: 'A' },
+      { id: 'tool.circle', label: '円を計測 (中心→ドラッグ)', accel: 'C' },
+      { type: 'separator' },
       { id: 'tool.alignmentFromPoints', label: '取得点から線形(IP)を作成' }
     ]},
     { label: 'ヘルプ', items: [
