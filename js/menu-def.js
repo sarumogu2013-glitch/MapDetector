@@ -7,7 +7,7 @@
     { label: 'ファイル', items: [
       { id: 'file.openTiles', label: 'タイルフォルダを開く...', accel: 'CmdOrCtrl+O' },
       { id: 'file.openDrawing', label: '図面を開く (DXF/GeoJSON/画像)...', accel: 'CmdOrCtrl+D' },
-      { id: 'file.openSima', label: '線形SIMAを開く...', accel: 'CmdOrCtrl+L' },
+      { id: 'file.openSima', label: '線形SIMAを開く (CSV/XML)...', accel: 'CmdOrCtrl+L' },
       { type: 'separator' },
       { id: 'file.exportCsv', label: '取得座標をCSV出力...', accel: 'CmdOrCtrl+E' },
       { id: 'file.exportSima', label: '取得座標をSIMA出力...' },

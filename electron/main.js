@@ -442,7 +442,7 @@ const OPEN_FILTERS = {
     { name: 'すべてのファイル', extensions: ['*'] }
   ],
   sima: [
-    { name: 'SIMA', extensions: ['sim', 'txt'] },
+    { name: 'SIMA (CSV / JPGIS XML)', extensions: ['sim', 'xml', 'txt'] },
     { name: 'すべてのファイル', extensions: ['*'] }
   ],
   any: [{ name: 'すべてのファイル', extensions: ['*'] }]

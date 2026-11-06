@@ -41,8 +41,8 @@
       <div class="row">
         <button id="btnOpenDrawing">図面を開く</button>
         <button id="btnOpenSima">線形SIMA</button>
-        <input type="file" id="inpDrawing" accept=".dxf,.geojson,.json,.png,.jpg,.jpeg" hidden>
-        <input type="file" id="inpSima" accept=".sim,.txt" hidden>
+        <input type="file" id="inpDrawing" accept=".dxf,.geojson,.json,.png,.jpg,.jpeg,.sim,.xml" hidden>
+        <input type="file" id="inpSima" accept=".sim,.txt,.xml" hidden>
       </div>
       <div class="row small">
         <label title="DXFのx→X(北), y→Y(東) として読む"><input type="checkbox" id="chkDxfSwap"> DXF XY入替</label>
@@ -116,6 +116,7 @@
 <script src="js/jprcs.js"></script>
 <script src="js/alignment.js"></script>
 <script src="js/sima.js"></script>
+<script src="js/simaxml.js"></script>
 <script src="js/dxf.js"></script>
 <script src="js/snap.js"></script>
 <script src="js/tiles.js"></script>

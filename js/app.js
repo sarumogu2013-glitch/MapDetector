@@ -303,7 +303,7 @@
           toast('赤い丸(左上/右上/左下)と中央の✥をドラッグして位置合わせ', 6000);
         };
         img.src = url;
-      } else if (ext === 'sim') { loadSima(name, data); }
+      } else if (ext === 'sim' || ext === 'xml') { loadSima(name, data); }
       else throw new Error('未対応の形式: ' + ext);
     } catch (e) { toast(name + ' を読めません: ' + e.message, 6000); console.error(e); }
   }
@@ -311,7 +311,10 @@
   // ---------------- 線形 (SIMA / IP) ----------------
   function loadSima(name, data) {
     try {
-      var res = MD.SIMA.parse(MD.SIMA.decode(data));
+      var text = MD.SIMA.decode(data);
+      var isXml = MD.SIMAXML && MD.SIMAXML.isSimaXml(text);
+      var res = isXml ? MD.SIMAXML.parse(text) : MD.SIMA.parse(text);
+      if (res.zone && res.zone !== S.zone) setZone(res.zone);
       var routes = (res.routes || []).filter(function (r) { return r.ips && r.ips.length >= 2; });
       if (routes.length) {
         routes.forEach(function (r) { r.label = name + ' : ' + (r.name || ('路線' + (r.no || ''))); });
@@ -320,15 +323,22 @@
         selectRoute(S.route.list.length - routes.length);
         fitRoute();
       }
-      if (res.points && res.points.length) {
-        // 座標点はノードとしてスナップ・表示
-        var shapes = res.points.map(function (p) { return { type: 'point', p: { e: p.e, n: p.n }, name: p.name, layer: 'sima', color: '#0369a1' }; });
-        res.points.forEach(function (p) { if (p.name) shapes.push({ type: 'text', p: { e: p.e, n: p.n }, text: p.name, h: 1, rot: 0, layer: 'sima', color: '#0369a1' }); });
-        addOverlay({ name: name + ' (座標' + res.points.length + '点)', kind: 'sima', shapes: shapes });
-        if (!routes.length) { var b = L.latLngBounds(res.points.map(function (p) { return toLL(p); })); map.fitBounds(b, { maxZoom: 19 }); }
+      var shapes = [];
+      (res.points || []).forEach(function (p) {
+        shapes.push({ type: 'point', p: { e: p.e, n: p.n }, name: p.name, layer: 'sima', color: '#0369a1' });
+        if (p.name) shapes.push({ type: 'text', p: { e: p.e, n: p.n }, text: p.name, h: 1, rot: 0, layer: 'sima', color: '#0369a1' });
+      });
+      (res.parcels || []).forEach(function (pc) {
+        if (pc.pts && pc.pts.length >= 3) shapes.push({ type: 'polyline', pts: pc.pts.map(function (q) { return { e: q.e, n: q.n }; }), closed: true, layer: '画地', color: '#b45309', name: pc.name });
+      });
+      (res.lines || []).forEach(function (ln) { shapes.push({ type: 'polyline', pts: ln.pts.map(function (q) { return { e: q.e, n: q.n }; }), closed: false, layer: '開放型画地', color: '#9333ea', name: ln.name }); });
+      if (shapes.length) {
+        var cnt = [(res.points || []).length + '点', (res.parcels || []).length ? res.parcels.length + '画地' : '', (res.lines || []).length ? res.lines.length + '線' : ''].filter(Boolean).join(' ');
+        addOverlay({ name: name + ' (' + cnt + ')', kind: 'sima', shapes: shapes });
+        if (!routes.length) { try { map.fitBounds(S.overlays[S.overlays.length - 1].layer.getBounds(), { maxZoom: 19 }); } catch (e) { /* 点のみ */ } }
       }
       var w = (res.warnings || []).concat.apply(res.warnings || [], routes.map(function (r) { return r.warnings || []; }));
-      toast(name + ': 路線 ' + routes.length + ' / 座標 ' + (res.points || []).length + '点' + (w.length ? '\n警告: ' + w.slice(0, 3).join(' / ') : ''), 6000);
+      toast(name + (isXml ? ' [JPGIS XML' + (res.zone ? ' ' + ROMAN[res.zone] + '系' : '') + ']' : '') + ': 路線 ' + routes.length + ' / 座標 ' + (res.points || []).length + '点' + (w.length ? '\n警告: ' + w.slice(0, 3).join(' / ') : ''), 6000);
     } catch (e) { toast('SIMAを読めません: ' + e.message, 6000); console.error(e); }
   }
   function renderRouteSelect() {

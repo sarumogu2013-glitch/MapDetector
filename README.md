@@ -15,6 +15,7 @@
   - 幅員線
   
   IP表は画面で編集できます。取得点からIPを作ることもできます。カーソル位置と取得点には、測点と中心線からの離れ (左+/右−) を表示します。横断線の座標はCSVで出力できます。
+- **SIMA (JPGIS版) XML**: `jsima102.xsd` 準拠の XML を読みます。現場情報の座標系で系番号を自動で設定し、測点・基準点・水準点・画地・開放型画地を表示します。XML 版には路線要素がないため、線形は点名 BP/IP/EP から組み立てます (曲線半径はIP表で入力)。
 - **背景地図**: 地理院タイル (淡色/標準/写真) を任意で表示できます。
 
 ## 開発
@@ -54,7 +55,7 @@ python3 scripts/make-sample-tiles.py /path/to/tiles
 | `js/imageoverlay.js` | 画像位置合わせ |
 | `js/jprcs.js` | 平面直角座標変換 (pyproj と比べて誤差 < 1mm) |
 | `js/alignment.js` | 線形計算 |
-| `js/sima.js`, `js/dxf.js` | SIMA / DXF 読み書き |
+| `js/sima.js`, `js/simaxml.js`, `js/dxf.js` | SIMA (CSV / JPGIS XML) / DXF 読み書き |
 | `js/snap.js` | スナップ (空間インデックス) |
 | `docs/CONTRACTS.md` | モジュール間の仕様 |
 
