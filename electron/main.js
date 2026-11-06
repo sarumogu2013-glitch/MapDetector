@@ -472,7 +472,8 @@ async function checkForUpdates(manual) {
 // ---------------------------------------------------------------------------
 const OPEN_FILTERS = {
   drawing: [
-    { name: '図面 (DXF/GeoJSON/画像)', extensions: ['dxf', 'geojson', 'json', 'png', 'jpg', 'jpeg'] },
+    { name: '図面 (DXF/GeoJSON/画像/GeoTIFF)', extensions: ['dxf', 'geojson', 'json', 'png', 'jpg', 'jpeg', 'tif', 'tiff'] },
+    { name: 'GeoTIFF', extensions: ['tif', 'tiff'] },
     { name: 'DXF', extensions: ['dxf'] },
     { name: 'GeoJSON', extensions: ['geojson', 'json'] },
     { name: '画像', extensions: ['png', 'jpg', 'jpeg'] },
@@ -568,6 +569,28 @@ function registerIpc() {
     const buf = encodeContent(opts.content, opts, false);
     await fsp.writeFile(opts.path, buf);
     return opts.path;
+  });
+
+  // 出力先フォルダの選択 (タイル・GeoTIFF 生成用)
+  ipcMain.handle('dir:choose', async (e, opts) => {
+    opts = opts || {};
+    const r = await dialog.showOpenDialog(senderWindow(e), {
+      title: opts.title || '出力先フォルダを選択',
+      defaultPath: settings['lastDir.export'] || undefined,
+      properties: ['openDirectory', 'createDirectory']
+    });
+    if (r.canceled || !r.filePaths || !r.filePaths[0]) return null;
+    settings['lastDir.export'] = r.filePaths[0]; saveSettingsSoon();
+    return r.filePaths[0];
+  });
+  // バイナリ書き込み (相対パスは base からの相対、途中のフォルダは自動作成)
+  ipcMain.handle('file:writeBinary', async (_e, base, rel, data) => {
+    if (typeof base !== 'string' || !base || typeof rel !== 'string' || !rel) throw new Error('出力先が不正です');
+    const target = path.resolve(base, rel);
+    if (!target.startsWith(path.resolve(base))) throw new Error('出力先フォルダの外には書き込めません');
+    await fsp.mkdir(path.dirname(target), { recursive: true });
+    await fsp.writeFile(target, Buffer.from(data instanceof ArrayBuffer ? new Uint8Array(data) : data));
+    return target;
   });
 
   ipcMain.handle('file:save', async (e, opts) => {

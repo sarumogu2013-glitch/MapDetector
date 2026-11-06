@@ -210,9 +210,10 @@
     var o = { kind: 'tiles', name: rs.label || name, opened: opened, tms: rs.tms != null ? !!rs.tms : !!info.tms, opacity: rs.opacity != null ? rs.opacity : 1, path: opened.kind === 'electron' ? info.root : null };
     o.layer = MD.Tiles.createLayer(opened, o.tms);
     o.layer.setOpacity(o.opacity);
-    o.overview = makeOverview(o);
+    o.overview = opened.kind === 'web' ? null : makeOverview(o);   // Web タイルは全体図なし
+    if (opened.kind === 'web') o.web = info;
     addOverlay(o, opt.restore);
-    if (o.visible) o.overview.addTo(map);
+    if (o.visible && o.overview) o.overview.addTo(map);
     o.layer.setZIndex(1 + tileLayers().length);
     updateMaxZoom();
     var lv = info.levels;
@@ -235,7 +236,39 @@
   });
   // 互換: 旧 API (起動時の再オープン等)
   function setTiles(opened, name, opt) { return addTileLayer(opened, name, opt); }
-  function tileBounds(o) { return MD.Tiles.boundsOf(tileInfoOf(o), o.tms); }
+  function tileBounds(o) { return o.opened.kind === 'web' ? null : MD.Tiles.boundsOf(tileInfoOf(o), o.tms); }
+
+  // ---- Web タイル (URL テンプレート) をレイヤーとして追加
+  var WEB_PRESETS = [
+    { name: '地理院 標準地図', url: 'https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png', minZ: 5, maxZ: 18, attribution: '地理院タイル' },
+    { name: '地理院 淡色地図', url: 'https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png', minZ: 5, maxZ: 18, attribution: '地理院タイル' },
+    { name: '地理院 写真 (シームレス)', url: 'https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg', minZ: 2, maxZ: 18, attribution: '地理院タイル' },
+    { name: '地理院 白地図', url: 'https://cyberjapandata.gsi.go.jp/xyz/blank/{z}/{x}/{y}.png', minZ: 5, maxZ: 14, attribution: '地理院タイル' },
+    { name: '地理院 陰影起伏図', url: 'https://cyberjapandata.gsi.go.jp/xyz/hillshademap/{z}/{x}/{y}.png', minZ: 2, maxZ: 16, attribution: '地理院タイル' },
+    { name: '地理院 色別標高図', url: 'https://cyberjapandata.gsi.go.jp/xyz/relief/{z}/{x}/{y}.png', minZ: 5, maxZ: 15, attribution: '地理院タイル' },
+    { name: 'OpenStreetMap', url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', minZ: 0, maxZ: 19, attribution: '© OpenStreetMap contributors' }
+  ];
+  function addWebTileLayer(cfg, opt) {
+    if (!/^https?:\/\//.test(cfg.url) || cfg.url.indexOf('{z}') < 0) throw new Error('URL は https://…/{z}/{x}/{y}.png の形式で指定してください');
+    var opened = MD.Tiles.webOpened(cfg);
+    return addTileLayer(opened, cfg.name || cfg.url, L.extend({ noFit: true }, opt || {}));
+  }
+  (function () {
+    var sel = $('webPreset');
+    WEB_PRESETS.forEach(function (p, i) { var o = document.createElement('option'); o.value = i; o.textContent = p.name; sel.appendChild(o); });
+    var cu = document.createElement('option'); cu.value = 'custom'; cu.textContent = '任意の URL…'; sel.appendChild(cu);
+    function fill() { var p = WEB_PRESETS[+sel.value]; if (!p) return; $('webName').value = p.name; $('webUrl').value = p.url; $('webMinZ').value = p.minZ; $('webMaxZ').value = p.maxZ; }
+    sel.onchange = fill; fill();
+    $('btnAddWeb').onclick = function () { $('dlgWeb').showModal(); };
+    $('webOk').onclick = function (e) {
+      e.preventDefault();
+      try {
+        var p = WEB_PRESETS[+sel.value] || {};
+        addWebTileLayer({ name: $('webName').value, url: $('webUrl').value.trim(), minZ: +$('webMinZ').value || 0, maxZ: +$('webMaxZ').value || 18, tms: $('webTms').checked, attribution: p.attribution || '' });
+        $('dlgWeb').close();
+      } catch (err) { toast(err.message, 5000); }
+    };
+  })();
   function fitTiles(autoZone, only) {
     var b = null;
     (only ? [only] : tileLayers()).forEach(function (o) { var x = tileBounds(o); if (x) b = b ? b.extend(x) : L.latLngBounds(x.getSouthWest(), x.getNorthEast()); });
@@ -248,7 +281,7 @@
     o.layer.remove(); o.tms = tms;
     if (o.overview) o.overview.remove();
     o.layer = MD.Tiles.createLayer(o.opened, tms); o.layer.setOpacity(o.opacity);
-    o.overview = makeOverview(o);
+    o.overview = o.opened.kind === 'web' ? null : makeOverview(o);
     if (vis) o.layer.addTo(map);
     fitTiles(false, o); markDirty();
   }
@@ -407,7 +440,7 @@
       }
       var cnt = o.kind === 'points' ? ' (' + S.points.length + ')' : o.kind === 'measure' ? ' (' + S.measures.length + ')' : '';
       li.innerHTML = '<input type="checkbox" class="vis" title="表示"' + (o.visible ? ' checked' : '') + '>' +
-        '<span class="kind">' + (KIND_LABEL[o.kind] || o.kind) + '</span>' +
+        '<span class="kind">' + (o.geotiff ? 'GeoTIFF' : o.web ? 'Web' : (KIND_LABEL[o.kind] || o.kind)) + '</span>' +
         '<span class="name" title="' + esc(o.name + (o.info ? '\n' + o.info : '')) + '">' + esc(o.name) + cnt + '</span>' + ctl +
         '<button class="x" title="' + (o.fixed ? 'すべて削除' : '削除') + '">×</button>';
       li.querySelector('.vis').onchange = function () {
@@ -495,8 +528,34 @@
           toast('赤い丸(左上/右上/左下)と中央の✥をドラッグして位置合わせ', 6000);
         };
         img.src = url;
-      } else if (ext === 'sim' || ext === 'xml') { loadSima(name, data, opt); }
+      } else if (ext === 'tif' || ext === 'tiff') { loadGeoTiff(name, data, rs); }
+      else if (ext === 'sim' || ext === 'xml') { loadSima(name, data, opt); }
       else throw new Error('未対応の形式: ' + ext);
+    } catch (e) { toast(name + ' を読めません: ' + e.message, 6000); console.error(e); }
+  }
+
+  /** GeoTIFF をレイヤー (位置合わせ済みの画像) として追加。EPSG から平面直角/緯度経度/Webメルカトルを判別 */
+  async function loadGeoTiff(name, data, rs) {
+    try {
+      if (!rs) toast(name + ' を読み込み中…', 20000);
+      var g = await MD.GeoTIFF.read(data, { maxSize: 4096 });
+      var ep = g.epsg, zone = null, toLatLng;
+      if (ep >= 6669 && ep <= 6687) zone = ep - 6668;          // JGD2011 平面直角 I〜XIX
+      else if (ep >= 2443 && ep <= 2461) zone = ep - 2442;     // JGD2000 平面直角
+      if (zone) toLatLng = function (c) { var r = MD.JPRCS.toLatLng(c.x, c.y, zone); return L.latLng(r.lat, r.lng); };
+      else if (ep === 4326 || ep === 6668 || ep === 4612) toLatLng = function (c) { return L.latLng(c.y, c.x); };
+      else if (ep === 3857 || ep === 900913) toLatLng = function (c) { return L.CRS.EPSG3857.unproject(L.point(c.x, c.y)); };
+      else { zone = S.zone; toLatLng = function (c) { var r = MD.JPRCS.toLatLng(c.x, c.y, zone); return L.latLng(r.lat, r.lng); }; if (!rs) toast(name + ': 座標系 (EPSG ' + ep + ') を判別できないため、現在の平面直角座標 ' + ROMAN[S.zone] + '系として配置しました', 8000); }
+      if (zone && zone !== S.zone && !rs) toast(name + ': GeoTIFF は ' + ROMAN[zone] + '系です (表示は現在の ' + ROMAN[S.zone] + '系の地図に重ねています)', 6000);
+      var cv = document.createElement('canvas'); cv.width = g.width; cv.height = g.height;
+      cv.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(g.rgba.buffer, g.rgba.byteOffset, g.width * g.height * 4), g.width, g.height), 0, 0);
+      var blob = await new Promise(function (r) { cv.toBlob(r, 'image/png'); });
+      var url = URL.createObjectURL(blob);
+      var corners = [g.corners.tl, g.corners.tr, g.corners.bl].map(toLatLng);
+      var layer = new MD.AffineImage(url, rs && rs.image ? rs.image.corners.map(function (c) { return L.latLng(c[0], c[1]); }) : corners,
+        { opacity: rs && rs.image ? rs.image.opacity : 1, editable: rs && rs.image ? rs.image.editable : false });
+      addOverlay({ name: name + (g.srcWidth > g.width ? ' (' + g.srcWidth + '×' + g.srcHeight + ' → 表示 ' + g.width + '×' + g.height + ')' : ''), kind: 'image', geotiff: true, layer: layer, url: url, shapes: [], src: { name: name, data: data } }, rs);
+      if (!rs) { map.fitBounds(L.latLngBounds(corners), { maxZoom: 20 }); toast(name + ' を読み込みました (EPSG ' + (ep || '不明') + ')', 4000); }
     } catch (e) { toast(name + ' を読めません: ' + e.message, 6000); console.error(e); }
   }
 
@@ -1081,7 +1140,11 @@
       view: { center: [c.lat, c.lng], zoom: map.getZoom(), bearing: getBearing() }, home: S.home || null,
       zone: S.zone, base: $('selBase').value, panelHidden: $('panel').classList.contains('hidden'),
       // タイルは重いのでフォルダの場所だけ (レイヤー順)
-      tiles: tileLayers().map(function (o) { return { label: o.name, path: o.path, tms: o.tms, opacity: o.opacity, visible: o.visible }; }),
+      tiles: tileLayers().map(function (o) {
+        var r = { label: o.name, path: o.path, tms: o.tms, opacity: o.opacity, visible: o.visible };
+        if (o.web) { var lv = o.web.levels; r.web = { url: o.web.url, minZ: lv[0], maxZ: lv[lv.length - 1], attribution: o.web.attribution }; }
+        return r;
+      }),
       pointsLayer: { visible: S.ptOverlay.visible, snap: S.ptOverlay.snap },
       measures: S.measures, measureLayer: { visible: S.msOverlay.visible, snap: S.msOverlay.snap },
       overlays: S.overlays.filter(function (o) { return o.src; }).map(function (o) {
@@ -1129,6 +1192,7 @@
       var tl = pj.tiles || (pj.tile ? [{ label: pj.tile.name, path: pj.tile.path, tms: pj.tile.tms, opacity: pj.tile.opacity, visible: true }] : []);
       for (var ti = 0; ti < tl.length; ti++) {
         var t = tl[ti], info = null;
+        if (t.web) { addWebTileLayer({ name: t.label, url: t.web.url, minZ: t.web.minZ, maxZ: t.web.maxZ, tms: t.tms, attribution: t.web.attribution }, { restore: t }); continue; }
         if (t.path && N && N.openTilePath) { try { info = await N.openTilePath(t.path); } catch (e) { info = null; } }
         if (info) addTileLayer({ kind: 'electron', info: info }, t.label || info.root, { noFit: true, restore: t });
         else warn.push('タイルフォルダ「' + (t.path || t.label) + '」を開けませんでした (タイルは別途開いてください)');
@@ -1305,6 +1369,29 @@
     PR.grid = { cols: cols, rows: rows };
     return out;
   }
+  /** 線形上の位置 (BP からの距離 s)。範囲外は BP/EP の接線方向へ直線で延長 */
+  function routePos(s) {
+    var al = S.route.al, L1 = al.length;
+    if (s >= 0 && s <= L1) return MD.Alignment.pointAt(al, s);
+    var q = MD.Alignment.pointAt(al, s < 0 ? 0 : L1), d = s < 0 ? s : s - L1;
+    return { e: q.e + Math.cos(q.h) * d, n: q.n + Math.sin(q.h) * d, h: q.h };
+  }
+  function prRouteMode() { return prBatch() && $('prBatchRoute').checked; }
+  /** 線形に沿ったページ: 起点追加距離から用紙の長辺ぶん (ラップを引いた間隔) ずつ。向きは各ページ両端を結ぶ弦が左→右になるように */
+  function prRoutePages(o) {
+    if (!S.route.al) return [];
+    var bp = +$('numStart').value || 0;
+    var c0 = $('prRtStart').value === '' ? bp : +$('prRtStart').value;
+    var c1 = $('prRtEnd').value === '' ? bp + S.route.al.length : +$('prRtEnd').value;
+    var gw = o.pxW / o.pxPerM, ov = prOverlap(o).w, step = Math.max(gw * 0.05, gw - ov), out = [];
+    for (var ch = c0, i = 0; ch < c1 - 1e-6 && i < 500; ch += step, i++) {
+      var s0 = ch - bp, s1 = s0 + gw, a = routePos(s0), b = routePos(s1), m = routePos(s0 + gw / 2);
+      var az = Math.atan2(b.e - a.e, b.n - a.n) * 180 / Math.PI;   // 弦の座標方位角 (北から時計回り)
+      out.push({ c: toLL(m), bearing: 90 - az, label: fmtCh(ch) + ' 〜 ' + fmtCh(ch + gw) });
+    }
+    return out;
+  }
+  function pageOf(p) { return p && p.c ? p : { c: p }; }
   function prUpdate() {
     if (!PR.open) return;
     var o = prOpt(), c = PR.center || map.getCenter();
@@ -1323,13 +1410,17 @@
       PR.pages = [c];
     } else {
       if (PR.frame) PR.frame.remove();
-      PR.pages = prPages(o);
-      if (PR.area) L.polygon(PR.area.map(toLL), { color: '#2563eb', weight: 1.5, dashArray: '4 4', fill: false, interactive: false }).addTo(PR.pageLayer);
-      PR.pages.forEach(function (pc, i) {
-        L.polygon(prCorners(o, pc), { color: '#ea580c', weight: 1.6, fillColor: '#fb923c', fillOpacity: 0.06, interactive: false }).addTo(PR.pageLayer);
-        L.marker(pc, { interactive: false, icon: L.divIcon({ className: '', iconSize: null, html: '<div class="md-page-no">' + (i + 1) + '</div>' }) }).addTo(PR.pageLayer);
+      var rt = prRouteMode();
+      $('prAreaBox').hidden = rt; $('prRouteBox').hidden = !rt;
+      PR.pages = rt ? prRoutePages(o) : prPages(o);
+      if (!rt && PR.area) L.polygon(PR.area.map(toLL), { color: '#2563eb', weight: 1.5, dashArray: '4 4', fill: false, interactive: false }).addTo(PR.pageLayer);
+      PR.pages.forEach(function (p, i) {
+        var pg = pageOf(p), oo = pg.bearing != null ? L.extend({}, o, { bearing: pg.bearing }) : o;
+        L.polygon(prCorners(oo, pg.c), { color: '#ea580c', weight: 1.6, fillColor: '#fb923c', fillOpacity: 0.06, interactive: false }).addTo(PR.pageLayer);
+        L.marker(pg.c, { interactive: false, icon: L.divIcon({ className: '', iconSize: null, html: '<div class="md-page-no">' + (i + 1) + '</div>' }) }).addTo(PR.pageLayer);
       });
-      $('prBatchInfo').textContent = PR.area ? PR.pages.length + ' 枚 (' + PR.grid.cols + ' 列 × ' + PR.grid.rows + ' 行)' : '「範囲を選択」を押して、地図上でドラッグしてください';
+      if (rt) $('prBatchInfo').textContent = S.route.al ? PR.pages.length + ' 枚 (線形に沿って ' + (PR.pages[0] ? PR.pages[0].label.split(' 〜 ')[0] : '') + ' から)' : '線形がありません (線形SIMA または IP表を用意してください)';
+      else $('prBatchInfo').textContent = PR.area ? PR.pages.length + ' 枚 (' + PR.grid.cols + ' 列 × ' + PR.grid.rows + ' 行)' : '「範囲を選択」を押して、地図上でドラッグしてください';
     }
     var gw = o.pxW / o.pxPerM, gh = o.pxH / o.pxPerM;
     $('prInfo').textContent = '縮尺 1:' + Math.round(o.scale).toLocaleString() + (o.fixedScale ? '' : ' (ズーム ' + o.zsel + ')') + ' 座標基準 / 1枚の範囲 ' + gw.toFixed(1) + ' m × ' + gh.toFixed(1) + ' m / 回転 ' + o.bearing.toFixed(1) + '°' + ' / ' + o.pxW + '×' + o.pxH + ' px';
@@ -1435,7 +1526,7 @@
     if (PR.pageLayer) { PR.pageLayer.remove(); PR.pageLayer = null; }
     PR.selecting = false;
   }
-  ['prPaper', 'prOrient', 'prDpi', 'prMargin', 'prZoom', 'prRotKeep', 'prRotNorth', 'prScaleIn', 'prModeSingle', 'prModeBatch', 'prStart', 'prOvVal', 'prOvUnit'].forEach(function (id) { $(id).addEventListener('change', function () {
+  ['prPaper', 'prOrient', 'prDpi', 'prMargin', 'prZoom', 'prRotKeep', 'prRotNorth', 'prScaleIn', 'prModeSingle', 'prModeBatch', 'prStart', 'prOvVal', 'prOvUnit', 'prBatchArea', 'prBatchRoute', 'prRtStart', 'prRtEnd'].forEach(function (id) { $(id).addEventListener('change', function () {
     prUpdate();
     // 枠がはみ出したら全体が見えるように表示を合わせる
     try { var fb = prBatch() ? (PR.pageLayer.getLayers().length ? L.featureGroup(PR.pageLayer.getLayers()).getBounds() : null) : PR.frame.getBounds(); if (fb && !map.getBounds().contains(fb)) map.fitBounds(fb, { padding: [40, 40], animate: false }); } catch (e) { /* empty */ }
@@ -1487,7 +1578,7 @@
     ctx.restore();
   }
   /** 用紙 1 枚を作る (印刷地図 + ラスタ + 方位図・縮尺バー + 下欄)。戻り値 { sheet, map } */
-  async function buildSheet(holder, o, c, pageNo, pageCount) {
+  async function buildSheet(holder, o, c, pageNo, pageCount, pageLabel) {
     var k = o.dpi / 96;
     var sheet = document.createElement('div'); sheet.className = 'ps-sheet';
     sheet.style.width = o.W + 'mm'; sheet.style.height = o.H + 'mm';
@@ -1537,6 +1628,7 @@
     var now = new Date();
     foot.innerHTML = '<span class="ps-title">' + esc($('prTitle').value || PROJ.name || '') + '</span>' +
       (pageCount > 1 ? '<span class="ps-page">' + pageNo + ' / ' + pageCount + '</span>' : '') +
+      (pageLabel ? '<span class="ps-page">' + esc(pageLabel) + '</span>' : '') +
       '<span>中心 X ' + Pc.n.toFixed(1) + ' Y ' + Pc.e.toFixed(1) + '</span><span>JGD2011 平面直角座標 ' + ROMAN[S.zone] + '系</span><span>縮尺 1:' + Math.round(o.scale).toLocaleString() + ' (' + o.paper + '・座標基準)</span><span>' + now.getFullYear() + '/' + (now.getMonth() + 1) + '/' + now.getDate() + '</span><span>MapDetector ' + VERSION + '</span>';
     inner.appendChild(foot);
     return { sheet: sheet, map: pm };
@@ -1551,7 +1643,8 @@
   async function doPrint(preview) {
     if (PR.busy) return;
     var o = prOpt(), pages = PR.pages && PR.pages.length ? PR.pages : [PR.center];
-    if (prBatch() && !PR.area) { toast('バッチ印刷: 先に「範囲を選択」で印刷範囲を指定してください', 5000); return; }
+    if (prBatch() && !prRouteMode() && !PR.area) { toast('バッチ印刷: 先に「範囲を選択」で印刷範囲を指定してください', 5000); return; }
+    if (prRouteMode() && !pages.length) { toast('線形に沿った印刷: 線形がありません', 5000); return; }
     if (pages.length > 60 && !confirm(pages.length + ' 枚になります。続けますか?')) return;
     PR.busy = true;
     clearStage();
@@ -1560,7 +1653,8 @@
     try {
       for (var i = 0; i < pages.length; i++) {
         toast('印刷用の地図を準備中… ' + (i + 1) + ' / ' + pages.length, 120000);
-        PR.built.push(await buildSheet($('printSheet'), o, pages[i], i + 1, pages.length));
+        var pg = pageOf(pages[i]);
+        PR.built.push(await buildSheet($('printSheet'), pg.bearing != null ? L.extend({}, o, { bearing: pg.bearing }) : o, pg.c, i + 1, pages.length, pg.label));
       }
     } catch (e) { toast('印刷の準備に失敗しました: ' + e.message, 6000); console.error(e); PR.busy = false; clearStage(); return; }
     PR.busy = false;
@@ -1719,6 +1813,247 @@
     saveText(base + '_' + layers.map(function (l) { return l.name.toLowerCase(); }).join('_') + '.dxf', txt, N ? 'shift_jis' : 'utf8', [{ name: 'DXF', extensions: ['dxf'] }]);
   }
 
+  // ---------------- 書き出し (選択範囲の表示中レイヤー → タイルフォルダ / GeoTIFF) ----------------
+  // 画面の DOM は画像化できないので、各レイヤーを canvas に直接描く「合成描画」を使う。
+  //   P.toPx(平面座標) / P.llToPx(LatLng) → [x, y]、P.mpp = 出力 1px あたりの地上距離 (m)
+  var IMGCACHE = new Map();
+  function loadImg(url, cors) {
+    if (IMGCACHE.has(url)) { var v = IMGCACHE.get(url); IMGCACHE.delete(url); IMGCACHE.set(url, v); return v; }
+    var p = new Promise(function (res) {
+      var im = new Image(); if (cors) im.crossOrigin = 'anonymous';
+      im.onload = function () { res(im); }; im.onerror = function () { res(null); }; im.src = url;
+    });
+    IMGCACHE.set(url, p);
+    if (IMGCACHE.size > 600) IMGCACHE.delete(IMGCACHE.keys().next().value);
+    return p;
+  }
+  function affineDraw(ctx, img, p0, p1, p2, alpha) {   // 画像の左上・右上・左下を p0,p1,p2 へ
+    var w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+    ctx.save(); ctx.globalAlpha = alpha == null ? 1 : alpha;
+    ctx.setTransform((p1[0] - p0[0]) / w, (p1[1] - p0[1]) / w, (p2[0] - p0[0]) / h, (p2[1] - p0[1]) / h, p0[0], p0[1]);
+    ctx.drawImage(img, -0.3, -0.3, w + 0.6, h + 0.6); ctx.restore();
+  }
+  async function drawTilesTo(ctx, P, W, H, o, llBox) {
+    var src = MD.Tiles.makeSource(o.opened, o.tms), lv = src.levels;
+    try {
+      var lat = (llBox.getNorth() + llBox.getSouth()) / 2;
+      var zt = Math.round(Math.log2(40075016.686 * Math.cos(lat * Math.PI / 180) / (256 * P.mpp)));
+      zt = Math.max(lv[0], Math.min(lv[lv.length - 1], zt));
+      var T = MD.Tiles, n = Math.pow(2, zt);
+      var x0 = Math.floor((llBox.getWest() + 180) / 360 * n), x1 = Math.floor((llBox.getEast() + 180) / 360 * n);
+      var ty = function (la) { var r = la * Math.PI / 180; return Math.floor((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * n); };
+      var y0 = ty(llBox.getNorth()), y1 = ty(llBox.getSouth()), jobs = [];
+      for (var x = x0; x <= x1; x++) for (var y = y0; y <= y1; y++) jobs.push([x, y]);
+      if (jobs.length > 6000) throw new Error('元タイルが多すぎます (' + jobs.length + ' 枚)。範囲を狭めるか解像度を下げてください');
+      var q = jobs.slice(), cors = !!src.web || o.opened.kind === 'electron';
+      async function worker() {
+        while (q.length) {
+          var j = q.shift(), url = await src.getUrl(zt, j[0], j[1]); if (!url) continue;
+          var img = await loadImg(url, cors); if (!img) continue;
+          affineDraw(ctx, img, P.llToPx([T.tile2lat(j[1], zt), T.tile2lng(j[0], zt)]), P.llToPx([T.tile2lat(j[1], zt), T.tile2lng(j[0] + 1, zt)]), P.llToPx([T.tile2lat(j[1] + 1, zt), T.tile2lng(j[0], zt)]), o.opacity);
+        }
+      }
+      var ws = []; for (var i = 0; i < 12; i++) ws.push(worker()); await Promise.all(ws);
+    } finally { if (!src.web) { /* blob URL はキャッシュ中も使うので解放しない (書き出し終了時にまとめて) */ } }
+  }
+  function drawShapesTo(ctx, P, shapes, color, k) {
+    ctx.save(); ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    shapes.forEach(function (sh) {
+      var col = color || sh.color || '#0f172a'; ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = 1.4 * k;
+      var pts = null;
+      if (sh.type === 'polyline') { pts = sh.pts; if (sh.closed && pts.length > 2) pts = pts.concat([pts[0]]); }
+      else if (sh.type === 'circle') pts = arcPts(sh.c, sh.r, 0, Math.PI * 2, 128);
+      else if (sh.type === 'arc') pts = arcPts(sh.c, sh.r, sh.a0, sh.a1, 128);
+      if (pts && pts.length > 1) { ctx.beginPath(); pts.forEach(function (p, i) { var q = P.toPx(p); if (i) ctx.lineTo(q[0], q[1]); else ctx.moveTo(q[0], q[1]); }); ctx.stroke(); }
+      else if (sh.type === 'point') { var q = P.toPx(sh.p); ctx.beginPath(); ctx.arc(q[0], q[1], 3 * k, 0, Math.PI * 2); ctx.fill(); }
+    });
+    shapes.forEach(function (sh) { if (sh.type === 'text' && sh.text) drawLabel(ctx, P.toPx(sh.p), String(sh.text), sh.color || color || '#111', 11 * k, -(sh.rot || 0) * 180 / Math.PI + (P.bearing || 0), 'left'); });
+    ctx.restore();
+  }
+  function drawLabel(ctx, q, text, color, px, rotDeg, align) {
+    ctx.save(); ctx.translate(q[0], q[1]); if (rotDeg) ctx.rotate(rotDeg * Math.PI / 180);
+    ctx.font = '600 ' + px.toFixed(1) + 'px "Segoe UI","Yu Gothic UI","Meiryo",sans-serif'; ctx.textAlign = align || 'left'; ctx.textBaseline = 'middle';
+    ctx.lineWidth = px * 0.3; ctx.strokeStyle = 'rgba(255,255,255,.95)'; ctx.strokeText(text, 0, 0);
+    ctx.fillStyle = color; ctx.fillText(text, 0, 0); ctx.restore();
+  }
+  function drawRouteTo(ctx, P, k, labels) {
+    var D = S.route.draw; if (!D) return;
+    ctx.save(); ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    function line(pts, col, w, dash) { if (!pts || pts.length < 2) return; ctx.strokeStyle = col; ctx.lineWidth = w * k; ctx.setLineDash(dash ? dash.map(function (d) { return d * k; }) : []); ctx.beginPath(); pts.forEach(function (p, i) { var q = P.toPx(p); if (i) ctx.lineTo(q[0], q[1]); else ctx.moveTo(q[0], q[1]); }); ctx.stroke(); }
+    if (D.ips) line(D.ips, '#64748b', 1, [6, 4]);
+    line(D.cl, '#dc2626', 2); line(D.ol, '#2563eb', 1.2); line(D.or, '#2563eb', 1.2);
+    D.subB.forEach(function (b) { line(b, '#16a34a', 0.8, [3, 3]); });
+    D.mainB.forEach(function (b) { line(b, '#16a34a', 1.4); });
+    D.keyB.forEach(function (b) { line(b, '#dc2626', 1.4); });
+    ctx.restore();
+    if (!labels) return;
+    var R = S.route, every = Math.max(1, Math.ceil(16 * k / Math.max(R.pitch / P.mpp, 0.01)));
+    every = [1, 2, 5, 10, 25, 50, 100, 250, 500, 1000].find(function (v) { return v >= every; }) || every;
+    R.bones.forEach(function (b) {
+      var st = b.station; if (st.kind === 'sub') return;
+      if (st.kind !== 'key' && Math.round(st.chainage / R.pitch) % every) return;
+      var q0 = P.toPx(b.c), q1 = P.toPx(b.l), ang = Math.atan2(q1[1] - q0[1], q1[0] - q0[0]) * 180 / Math.PI, flip = ang > 90 || ang < -90;
+      var q = [q1[0] + Math.cos(ang * Math.PI / 180) * 4 * k, q1[1] + Math.sin(ang * Math.PI / 180) * 4 * k];
+      drawLabel(ctx, q, st.label, st.kind === 'key' ? '#b91c1c' : '#065f46', 11 * k, flip ? ang + 180 : ang, flip ? 'right' : 'left');
+    });
+  }
+  /** 合成描画: レイヤー定義 (exLayerDefs) のうち選ばれたものを下から順に描く */
+  async function renderRegion(ctx, P, W, H, defs) {
+    var cs = [[0, 0], [W, 0], [0, H], [W, H]].map(function (c) { return P.pxToLl(c); });
+    var llBox = L.latLngBounds(cs);
+    for (var i = 0; i < defs.length; i++) { var d = defs[i]; if (d.on) await d.draw(ctx, P, W, H, llBox); }
+  }
+  function exLayerDefs() {
+    var k = 1, defs = [];
+    tileLayers().forEach(function (o) { defs.push({ id: o.id, label: 'タイル: ' + o.name, on: o.visible, draw: function (ctx, P, W, H, box) { return drawTilesTo(ctx, P, W, H, o, box); } }); });
+    S.overlays.filter(function (o) { return o.kind === 'image'; }).forEach(function (o) {
+      defs.push({ id: o.id, label: '画像: ' + o.name, on: o.visible, draw: async function (ctx, P) {
+        var img = await loadImg(o.url, false); if (!img) return; var c = o.layer.getCorners();
+        affineDraw(ctx, img, P.llToPx(c[0]), P.llToPx(c[1]), P.llToPx(c[2]), o.layer.options.opacity);
+      } });
+    });
+    S.overlays.filter(function (o) { return o.kind !== 'tiles' && o.kind !== 'image'; }).forEach(function (o) {
+      defs.push({ id: o.id, label: (KIND_LABEL[o.kind] || o.kind) + ': ' + o.name, on: o.visible, draw: function (ctx, P) { drawShapesTo(ctx, P, o.shapes || [], o.color, k); } });
+    });
+    if (S.route.draw) defs.push({ id: 'route', label: '線形 (中心線・幅員線・横断線・測点名)', on: true, draw: function (ctx, P) { drawRouteTo(ctx, P, k, $('chkLabels').checked); } });
+    if (S.measures.length) defs.push({ id: 'measure', label: '計測 (' + S.measures.length + ')', on: S.msOverlay.visible, draw: function (ctx, P) {
+      var sh = []; S.measures.forEach(function (m) { sh = sh.concat(msShapes(m)); }); drawShapesTo(ctx, P, sh, '#ea580c', k); } });
+    if (S.points.length) defs.push({ id: 'points', label: '取得点 (' + S.points.length + ')', on: S.ptOverlay.visible, draw: function (ctx, P) {
+      S.points.forEach(function (p) { var q = P.toPx(p); ctx.beginPath(); ctx.arc(q[0], q[1], 4, 0, Math.PI * 2); ctx.fillStyle = '#fff'; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = '#dc2626'; ctx.stroke(); drawLabel(ctx, [q[0] + 7, q[1] - 9], p.name, '#dc2626', 11, 0, 'left'); }); } });
+    return defs;
+  }
+
+  // ---- 書き出しパネル
+  var EX = { open: false, area: null, layer: null, cancel: false, busy: false };
+  function exOpen() {
+    EX.open = true; $('exportPanel').hidden = false;
+    var lv = tileLevels(), zmax = lv ? lv.max : Math.min(19, Math.ceil(map.getZoom()));
+    if (!$('exZ1').value) $('exZ1').value = zmax;
+    if (!$('exZ0').value) $('exZ0').value = Math.max(0, Math.min(zmax, Math.floor(map.getZoom()) - 2));
+    if (!$('exRes').value) { var mpp = metersPerPixel(map.getCenter().lat); $('exRes').value = (mpp < 0.1 ? mpp.toFixed(3) : mpp < 1 ? mpp.toFixed(2) : mpp.toFixed(1)); }
+    EX.defs = exLayerDefs();
+    var ul = $('exLayers'); ul.innerHTML = '';
+    EX.defs.forEach(function (d) { var li = document.createElement('label'); li.className = 'pr-layer'; li.innerHTML = '<input type="checkbox"' + (d.on ? ' checked' : '') + '> ' + esc(d.label); li.firstChild.onchange = function () { d.on = this.checked; }; ul.appendChild(li); });
+    exUpdate();
+  }
+  function exClose() { EX.open = false; $('exportPanel').hidden = true; if (EX.layer) { EX.layer.remove(); EX.layer = null; } EX.selecting = false; }
+  function exFmt() { return $('exFmtTif').checked ? 'tif' : 'tiles'; }
+  function exBox() {   // 選択範囲 (平面直角座標の軸に平行な長方形)
+    if (!EX.area) return null; var a = EX.area[0], b = EX.area[1];
+    return { e0: Math.min(a.e, b.e), e1: Math.max(a.e, b.e), n0: Math.min(a.n, b.n), n1: Math.max(a.n, b.n) };
+  }
+  function exUpdate() {
+    if (!EX.open) return;
+    $('exTilesBox').hidden = exFmt() !== 'tiles'; $('exTifBox').hidden = exFmt() !== 'tif';
+    if (EX.layer) EX.layer.remove();
+    var bx = exBox(), info = '';
+    if (bx) {
+      EX.layer = L.polygon([{ e: bx.e0, n: bx.n1 }, { e: bx.e1, n: bx.n1 }, { e: bx.e1, n: bx.n0 }, { e: bx.e0, n: bx.n0 }].map(toLL), { color: '#7c3aed', weight: 2, dashArray: '6 4', fillOpacity: 0.05, interactive: false }).addTo(map);
+      var w = bx.e1 - bx.e0, h = bx.n1 - bx.n0;
+      info = '範囲 ' + w.toFixed(1) + ' m × ' + h.toFixed(1) + ' m';
+      if (exFmt() === 'tiles') {
+        var z0 = +$('exZ0').value, z1 = +$('exZ1').value, ll = L.latLngBounds([toLL({ e: bx.e0, n: bx.n0 }), toLL({ e: bx.e1, n: bx.n1 }), toLL({ e: bx.e0, n: bx.n1 }), toLL({ e: bx.e1, n: bx.n0 })]), cnt = 0;
+        for (var z = Math.min(z0, z1); z <= Math.max(z0, z1); z++) { var r = tileRange(ll, z); cnt += (r.x1 - r.x0 + 1) * (r.y1 - r.y0 + 1); }
+        info += ' / タイル 約 ' + cnt.toLocaleString() + ' 枚';
+      } else {
+        var res = +$('exRes').value || 1, W = Math.ceil(w / res), H = Math.ceil(h / res), cp = exChunkPx(res);
+        info += ' / ' + W.toLocaleString() + '×' + H.toLocaleString() + ' px → ' + Math.ceil(W / cp) * Math.ceil(H / cp) + ' ファイル (1枚 最大 ' + cp + ' px)';
+      }
+    } else info = '「範囲を選択」を押して地図上でドラッグしてください';
+    $('exInfo').textContent = info;
+  }
+  function exChunkPx(res) { var v = +$('exSplitVal').value || 4000; var px = $('exSplitUnit').value === 'm' ? Math.round(v / res) : Math.round(v); return Math.max(16, Math.min(8000, px)); }
+  function tileRange(ll, z) {
+    var n = Math.pow(2, z), tx = function (lng) { return Math.max(0, Math.min(n - 1, Math.floor((lng + 180) / 360 * n))); };
+    var ty = function (la) { var r = la * Math.PI / 180; return Math.max(0, Math.min(n - 1, Math.floor((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * n))); };
+    return { x0: tx(ll.getWest()), x1: tx(ll.getEast()), y0: ty(ll.getNorth()), y1: ty(ll.getSouth()) };
+  }
+  $('exSelArea').onclick = function () { EX.selecting = true; $('map').classList.add('picking'); map.dragging.disable(); toast('地図上でドラッグして書き出し範囲を選択', 4000); };
+  map.on('mousedown', function (e) { if (!EX.selecting) return; if (e.originalEvent) e.originalEvent.preventDefault(); EX.selStart = toP(e.latlng); });
+  map.on('mousemove', function (e) { if (!EX.selecting || !EX.selStart) return; EX.area = [EX.selStart, toP(e.latlng)]; exUpdate(); });
+  map.on('mouseup', function () { if (!EX.selecting) return; EX.selecting = false; EX.selStart = null; $('map').classList.toggle('picking', S.picking); if (S.tool !== 'circle') map.dragging.enable(); exUpdate(); });
+  ['exFmtTiles', 'exFmtTif', 'exZ0', 'exZ1', 'exRes', 'exSplitVal', 'exSplitUnit'].forEach(function (id) { $(id).addEventListener('change', exUpdate); $(id).addEventListener('input', exUpdate); });
+  $('exClose').onclick = exClose;
+  $('exCancel').onclick = function () { EX.cancel = true; };
+  $('exGo').onclick = function () { doExport(); };
+
+  /** 出力先: デスクトップ版はフォルダへ直接、ブラウザ版は ZIP にまとめてダウンロード */
+  async function makeSink(defName) {
+    if (N && N.chooseDirectory) {
+      var base = await N.chooseDirectory({ title: '出力先フォルダを選択' }); if (!base) return null;
+      return { label: base, write: function (rel, u8) { return N.writeBinary(base, rel, u8); }, finish: async function () {} };
+    }
+    var files = [];
+    return { label: defName + '.zip', write: async function (rel, u8) { files.push({ name: rel, data: u8 }); }, finish: async function () {
+      var zip = MD.Zip.create(files); var a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([zip], { type: 'application/zip' })); a.download = defName + '.zip'; a.click();
+      setTimeout(function () { URL.revokeObjectURL(a.href); }, 10000); } };
+  }
+  function canvasToPng(cv) { return new Promise(function (res, rej) { cv.toBlob(function (b) { if (!b) return rej(new Error('PNG 変換に失敗')); b.arrayBuffer().then(function (ab) { res(new Uint8Array(ab)); }); }, 'image/png'); }); }
+  function isBlank(ctx, x, y, w, h) { var d = ctx.getImageData(x, y, w, h).data; for (var i = 3; i < d.length; i += 4 * 7) if (d[i]) return false; return true; }
+  function exProgress(t) { $('exProgress').textContent = t; }
+
+  async function doExport() {
+    if (EX.busy) return;
+    var bx = exBox(); if (!bx) { toast('先に「範囲を選択」で範囲を指定してください', 4000); return; }
+    var defs = EX.defs.filter(function (d) { return d.on; }); if (!defs.length) { toast('出力するレイヤーを選んでください'); return; }
+    var fmt = exFmt(), name = (PROJ.name || 'mapdetector').replace(/\.mdp$/i, '') + (fmt === 'tiles' ? '_tiles' : '_geotiff');
+    var sink = await makeSink(name); if (!sink) return;
+    EX.busy = true; EX.cancel = false; $('exGo').disabled = true; $('exCancel').hidden = false;
+    var done = 0, written = 0, t0 = performance.now();
+    try {
+      if (fmt === 'tiles') {
+        var ll = L.latLngBounds([toLL({ e: bx.e0, n: bx.n0 }), toLL({ e: bx.e1, n: bx.n1 }), toLL({ e: bx.e0, n: bx.n1 }), toLL({ e: bx.e1, n: bx.n0 })]);
+        var z0 = Math.min(+$('exZ0').value, +$('exZ1').value), z1 = Math.max(+$('exZ0').value, +$('exZ1').value), total = 0, CH = 8;
+        for (var z = z0; z <= z1; z++) { var rr = tileRange(ll, z); total += (rr.x1 - rr.x0 + 1) * (rr.y1 - rr.y0 + 1); }
+        if (total > 50000 && !confirm('タイルが ' + total.toLocaleString() + ' 枚になります。続けますか?')) throw new Error('中止しました');
+        for (z = z0; z <= z1 && !EX.cancel; z++) {
+          var r = tileRange(ll, z);
+          for (var cy = r.y0; cy <= r.y1 && !EX.cancel; cy += CH) for (var cx = r.x0; cx <= r.x1 && !EX.cancel; cx += CH) {
+            var nx = Math.min(CH, r.x1 - cx + 1), ny = Math.min(CH, r.y1 - cy + 1), W = nx * 256, H = ny * 256;
+            var cv = document.createElement('canvas'); cv.width = W; cv.height = H; var ctx = cv.getContext('2d', { willReadFrequently: true });
+            var org = L.point(cx * 256, cy * 256), zz = z;
+            var P = { mpp: 40075016.686 * Math.cos(ll.getCenter().lat * Math.PI / 180) / (256 * Math.pow(2, z)),
+              llToPx: function (q) { var p = map.project(L.latLng(q), zz).subtract(org); return [p.x, p.y]; },
+              pxToLl: function (q) { return map.unproject(org.add(L.point(q[0], q[1])), zz); } };
+            P.toPx = function (p) { return P.llToPx(toLL(p)); };
+            await renderRegion(ctx, P, W, H, defs);
+            for (var j = 0; j < ny; j++) for (var i = 0; i < nx; i++) {
+              done++;
+              if (isBlank(ctx, i * 256, j * 256, 256, 256)) continue;   // 何も無いタイルは出力しない
+              var tc = document.createElement('canvas'); tc.width = tc.height = 256; tc.getContext('2d').drawImage(cv, i * 256, j * 256, 256, 256, 0, 0, 256, 256);
+              await sink.write(z + '/' + (cx + i) + '/' + (cy + j) + '.png', await canvasToPng(tc)); written++;
+            }
+            exProgress('z' + z + ' … ' + done.toLocaleString() + ' / ' + total.toLocaleString() + ' 枚 (出力 ' + written.toLocaleString() + ')');
+          }
+        }
+      } else {
+        var res = +$('exRes').value; if (!(res > 0)) throw new Error('解像度 (m/px) を指定してください');
+        var Wt = Math.ceil((bx.e1 - bx.e0) / res), Ht = Math.ceil((bx.n1 - bx.n0) / res), cp = exChunkPx(res);
+        var cols = Math.ceil(Wt / cp), rows = Math.ceil(Ht / cp), epsg = 6668 + S.zone;
+        for (var rj = 0; rj < rows && !EX.cancel; rj++) for (var ci = 0; ci < cols && !EX.cancel; ci++) {
+          var w = Math.min(cp, Wt - ci * cp), h = Math.min(cp, Ht - rj * cp), e0 = bx.e0 + ci * cp * res, n0 = bx.n1 - rj * cp * res;
+          var cv2 = document.createElement('canvas'); cv2.width = w; cv2.height = h; var ctx2 = cv2.getContext('2d', { willReadFrequently: true });
+          var P2 = { mpp: res, toPx: function (p) { return [(p.e - e0) / res, (n0 - p.n) / res]; }, pxToLl: function (q) { return toLL({ e: e0 + q[0] * res, n: n0 - q[1] * res }); } };
+          P2.llToPx = function (q) { return P2.toPx(toP(L.latLng(q))); };
+          await renderRegion(ctx2, P2, w, h, defs);
+          var rgba = ctx2.getImageData(0, 0, w, h).data;
+          var tif = MD.GeoTIFF.write({ width: w, height: h, rgba: rgba, epsg: epsg, origin: { x: e0, y: n0 }, pixelSize: { x: res, y: res } });
+          var base = name + (rows * cols > 1 ? '_r' + (rj + 1) + '_c' + (ci + 1) : '');
+          await sink.write(base + '.tif', tif);
+          await sink.write(base + '.tfw', new TextEncoder().encode(MD.GeoTIFF.worldFile({ x: e0, y: n0 }, { x: res, y: res })));
+          written++; exProgress(written + ' / ' + rows * cols + ' ファイル');
+        }
+      }
+      if (EX.cancel) throw new Error('中止しました');
+      await sink.finish();
+      toast('書き出し完了: ' + written.toLocaleString() + (fmt === 'tiles' ? ' タイル' : ' ファイル') + ' → ' + sink.label + ' (' + ((performance.now() - t0) / 1000).toFixed(1) + ' 秒)', 8000);
+      exProgress('完了: ' + written.toLocaleString() + (fmt === 'tiles' ? ' タイル' : ' ファイル'));
+    } catch (e) {
+      var msg = /tainted|SecurityError/i.test(String(e && (e.name + e.message))) ? 'CORS に対応していない Web タイルが含まれているため出力できません。そのレイヤーを外してください' : e.message;
+      toast('書き出しを中断: ' + msg, 8000); exProgress('中断: ' + msg); console.error(e);
+    } finally { EX.busy = false; $('exGo').disabled = false; $('exCancel').hidden = true; IMGCACHE.clear(); }
+  }
+
   // ---------------- ホーム表示 (表示範囲のリセット) ----------------
   /** ホームに戻る: 「ホームに設定」した表示があればそれ、なければ読み込んだデータ全体 (タイル・図面・線形) を北上で表示 */
   function goHome() {
@@ -1745,6 +2080,8 @@
     'view.home': goHome, 'view.setHome': setHome, 'view.clearHome': clearHome,
     'view.north': function () { setBearing(0); },
     'edit.stations': function () { openStationEditor(); }, 'edit.ipGrid': function () { openIpEditor(); }, 'edit.pointsGrid': function () { openPointsEditor(); },
+    'file.addWebTiles': function () { $('dlgWeb').showModal(); },
+    'file.export': function () { if (EX.open) exClose(); else exOpen(); },
     'file.print': function () { if (PR.open) closePrint(); else openPrint(); },
     'file.printPreview': function () { if (!PR.open) openPrint(); doPrint(true); },
     'file.new': newProject, 'file.openProject': openProject,
@@ -1828,6 +2165,8 @@
     IC.ruler = '<path d="M3 17 17 3l4 4L7 21z"/><path d="M7 13l2 2M10 10l2 2M13 7l2 2"/>';
     IC.area = '<path d="M4 7 11 3l9 5-3 11H6z"/><path d="M9 12h6" opacity=".6"/>';
     IC.circleR = '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="1.2"/><path d="M12 12h8.5"/>';
+    IC.exportT = '<rect x="3" y="3" width="8" height="8"/><rect x="13" y="3" width="8" height="8"/><rect x="3" y="13" width="8" height="8"/><path d="M17 13v8M14 18l3 3 3-3"/>';
+    IC.web = '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/>';
     IC.dxf = '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="M8.5 16.5l3-5 3 5z"/>';
     var items = MD.Toolbar.DEFAULT_ITEMS.slice(), at = items.findIndex(function (x) { return x.id === 'tool.snapToggle'; });
     items.splice(at + 1, 0,
@@ -1835,7 +2174,10 @@
       { group: '計測', id: 'tool.area', label: '面積', icon: 'area', title: '面積を計測 (クリックで頂点、ダブルクリック/Enter で確定)', toggle: true },
       { group: '計測', id: 'tool.circle', label: '円', icon: 'circleR', title: '円を計測 (中心からドラッグ)', toggle: true });
     var cx = items.findIndex(function (x) { return x.id === 'file.exportCsv'; });
-    items.splice(cx + 1, 0, { group: '出力', id: 'file.exportDxf', label: 'DXF出力', icon: 'dxf', title: '計測・取得点を DXF 出力' });
+    items.splice(cx + 1, 0, { group: '出力', id: 'file.exportDxf', label: 'DXF出力', icon: 'dxf', title: '計測・取得点を DXF 出力' },
+      { group: '出力', id: 'file.export', label: 'タイル/TIFF', icon: 'exportT', title: '選択範囲をタイルフォルダ / GeoTIFF に書き出し' });
+    var ti = items.findIndex(function (x) { return x.id === 'file.openTiles'; });
+    items.splice(ti + 1, 0, { group: '読込', id: 'file.addWebTiles', label: 'Webタイル', icon: 'web', title: 'Web タイル (地理院地図・OSM・任意 URL) を追加' });
     MD.Toolbar.mount($('toolbar'), { run: runAction, items: items }); emitState();
   }
   updateMaxZoom();
@@ -1875,5 +2217,5 @@
   })();
 
   // デバッグ/テスト用
-  window.MDApp = { goHome: goHome, runAction: function (id) { runAction(id); }, PR: PR, openPrint: openPrint, doPrint: doPrint, prOpt: prOpt, DOCK: DOCK, serializeProject: serializeProject, applyProject: applyProject, saveProject: saveProject, PROJ: PROJ, S: S, map: map, loadDrawing: loadDrawing, loadSima: loadSima, addPoint: addPoint, setZone: setZone, setTiles: setTiles, computeSnap: computeSnap, rebuildRoute: rebuildRoute };
+  window.MDApp = { EX: EX, exOpen: exOpen, doExport: doExport, renderRegion: renderRegion, exLayerDefs: exLayerDefs, goHome: goHome, runAction: function (id) { runAction(id); }, PR: PR, openPrint: openPrint, doPrint: doPrint, prOpt: prOpt, DOCK: DOCK, serializeProject: serializeProject, applyProject: applyProject, saveProject: saveProject, PROJ: PROJ, S: S, map: map, loadDrawing: loadDrawing, loadSima: loadSima, addPoint: addPoint, setZone: setZone, setTiles: setTiles, computeSnap: computeSnap, rebuildRoute: rebuildRoute };
 })();

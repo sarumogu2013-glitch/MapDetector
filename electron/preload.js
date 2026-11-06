@@ -48,6 +48,8 @@ contextBridge.exposeInMainWorld('mdNative', {
 
   // ダイアログなしで書き込み。opts: {path, content, encoding?, bom?} → path。失敗時は reject。
   writeFile: (opts) => ipcRenderer.invoke('file:write', opts),
+  chooseDirectory: (opts) => ipcRenderer.invoke('dir:choose', opts),
+  writeBinary: (base, rel, data) => ipcRenderer.invoke('file:writeBinary', base, rel, data),
 
   // 未保存変更の有無をメインへ通知 (ウィンドウを閉じる際の確認に使用)
   setDirty: (dirty) => ipcRenderer.send('app:setDirty', !!dirty),

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self' mdtile: blob: data:; img-src 'self' mdtile: blob: data: https://cyberjapandata.gsi.go.jp; style-src 'self' 'unsafe-inline'; script-src 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' mdtile: blob: data:; img-src 'self' mdtile: blob: data: https: http:; connect-src 'self' mdtile: blob: data: https: http:; style-src 'self' 'unsafe-inline'; script-src 'self'">
 <title>MapDetector</title>
 <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
 <link rel="stylesheet" href="css/app.css">
@@ -21,6 +21,7 @@
       <div class="row">
         <button id="btnOpenTiles" title="タイルフォルダ (z/x/y.png) を開く">フォルダを開く</button>
         <button id="btnOpenTilesFallback" class="browser-only" title="ディレクトリ選択(全ファイル読込)">…(互換)</button>
+        <button id="btnAddWeb" title="Web タイル (地理院地図・OSM・任意の URL) をレイヤーとして追加">Webタイル追加</button>
         <input type="file" id="inpTiles" webkitdirectory multiple hidden>
       </div>
       <div id="tileInfo" class="info">未読込 — フォルダをドラッグ&ドロップでも開けます</div>
@@ -40,7 +41,7 @@
       <div class="row">
         <button id="btnOpenDrawing">図面を開く</button>
         <button id="btnOpenSima">線形SIMA</button>
-        <input type="file" id="inpDrawing" accept=".dxf,.geojson,.json,.png,.jpg,.jpeg,.sim,.xml" hidden>
+        <input type="file" id="inpDrawing" accept=".dxf,.geojson,.json,.png,.jpg,.jpeg,.sim,.xml,.tif,.tiff" hidden>
         <input type="file" id="inpSima" accept=".sim,.txt,.xml" hidden>
       </div>
       <div class="row small">
@@ -138,8 +139,17 @@
     <label><input type="radio" name="prMode" id="prModeBatch"> 複数枚 (範囲を分割してバッチ印刷)</label>
     <div id="prSingleBox" class="pr-sub">地図上のオレンジの枠をドラッグして配置 <button id="prCenter" type="button">画面中央へ</button></div>
     <div id="prBatchBox" class="pr-sub" hidden>
-      <button id="prSelArea" type="button">範囲を選択</button>
-      <label>起点 <select id="prStart"><option value="tl">左上から</option><option value="bl">左下から</option></select></label>
+      <label><input type="radio" name="prBatchKind" id="prBatchArea" checked> 範囲を分割</label>
+      <label><input type="radio" name="prBatchKind" id="prBatchRoute"> 線形に沿って</label>
+      <div id="prAreaBox" class="pr-sub">
+        <button id="prSelArea" type="button">範囲を選択</button>
+        <label>起点 <select id="prStart"><option value="tl">左上から</option><option value="bl">左下から</option></select></label>
+      </div>
+      <div id="prRouteBox" class="pr-sub" hidden>
+        <label>起点 追加距離 <input type="number" id="prRtStart" step="any" placeholder="BP" style="width:7em"></label>
+        <label>終点 <input type="number" id="prRtEnd" step="any" placeholder="EP" style="width:7em"></label>
+        <div class="info">用紙の長辺を線形の向きに合わせて並べます。起点が BP より手前なら、BP の接線を延長した向きで配置します。</div>
+      </div>
       <div id="prBatchInfo" class="info"></div>
     </div></div>
   <div class="pr-step"><b>4 表示レイヤー</b><div id="prLayers" class="pr-layers"></div>
@@ -156,6 +166,24 @@
   </details>
   <div id="prInfo" class="info"></div>
   <div class="row pr-buttons"><button id="prPreview">プレビュー</button><button id="prGo" class="primary">印刷...</button><button id="prClose">閉じる</button></div>
+</div>
+<div id="exportPanel" class="print-panel" hidden>
+  <h3>タイル・GeoTIFF の書き出し</h3>
+  <div class="pr-step"><b>1 形式</b>
+    <label><input type="radio" name="exFmt" id="exFmtTiles" checked> タイルフォルダ (z/x/y.png・Webメルカトル)</label>
+    <label><input type="radio" name="exFmt" id="exFmtTif"> GeoTIFF (平面直角座標・分割)</label></div>
+  <div class="pr-step"><b>2 範囲</b> <button id="exSelArea" type="button">範囲を選択</button> <span class="info">座標軸に平行な長方形をドラッグ</span></div>
+  <div class="pr-step" id="exTilesBox"><b>3 ズームレベル</b>
+    <label><input type="number" id="exZ0" min="0" max="24" style="width:4em"> 〜 <input type="number" id="exZ1" min="0" max="24" style="width:4em"></label></div>
+  <div class="pr-step" id="exTifBox" hidden><b>3 解像度・分割</b>
+    <label>解像度 <input type="number" id="exRes" min="0.001" step="any" style="width:6em"> m/px</label>
+    <label>分割 <input type="number" id="exSplitVal" value="4000" min="1" step="any" style="width:6em"></label>
+    <select id="exSplitUnit"><option value="px">ピクセルごと</option><option value="m">メートルごと</option></select>
+    <div class="info">1ファイルの一辺。ワールドファイル (.tfw) も出力します。</div></div>
+  <div class="pr-step"><b>4 レイヤー</b><div id="exLayers" class="pr-layers"></div></div>
+  <div id="exInfo" class="info"></div>
+  <div id="exProgress" class="info"></div>
+  <div class="row pr-buttons"><button id="exCancel" hidden>中止</button><button id="exGo" class="primary">書き出し...</button><button id="exClose">閉じる</button></div>
 </div>
 <div id="previewBar"><strong>印刷プレビュー</strong><span id="pvInfo"></span><span class="spacer"></span>
   <label>表示 <select id="pvFit"><option value="page">ページ全体</option><option value="width">幅に合わせる</option><option value="100">100%</option></select></label>
@@ -177,6 +205,16 @@
     <button autofocus>OK</button>
   </form>
 </dialog>
+<dialog id="dlgWeb" class="about"><form method="dialog" class="web-form">
+  <h3>Web タイルを追加</h3>
+  <label>種類 <select id="webPreset"></select></label>
+  <label>名前 <input id="webName"></label>
+  <label>URL <input id="webUrl" placeholder="https://…/{z}/{x}/{y}.png" style="width:30em"></label>
+  <div><label>ズーム <input type="number" id="webMinZ" min="0" max="24" style="width:4em"> 〜 <input type="number" id="webMaxZ" min="0" max="24" style="width:4em"></label>
+  <label><input type="checkbox" id="webTms"> TMS (Y反転)</label></div>
+  <div class="info">{z} {x} {y} ({-y}・{s} も可)。タイルの利用規約に従ってください。</div>
+  <div><button id="webOk" class="primary">追加</button> <button value="cancel">キャンセル</button></div>
+</form></dialog>
 <input type="file" id="inpProject" accept=".mdp,.json" hidden>
 
 <script src="vendor/leaflet/leaflet.js"></script>
@@ -189,6 +227,9 @@
 <script src="js/simaxml.js"></script>
 <script src="js/dxf.js"></script>
 <script src="js/dxfwriter.js"></script>
+<script src="vendor/geotiff/geotiff.js"></script>
+<script src="js/geotiff.js"></script>
+<script src="js/zip.js"></script>
 <script src="js/snap.js"></script>
 <script src="js/tiles.js"></script>
 <script src="js/imageoverlay.js"></script>

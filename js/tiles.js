@@ -136,7 +136,10 @@
     var opts = L.extend({}, COMMON, { minNativeZoom: lv[0], maxNativeZoom: lv[lv.length - 1], tms: !!tms,
       minZoom: Math.max(0, lv[0] - 6), bounds: boundsOf(info, tms) || undefined }, extra || {});
     var layer;
-    if (opened.kind === 'electron') {
+    if (opened.kind === 'web') {
+      // Web タイル (XYZ テンプレート URL)。crossOrigin で読み、タイル/GeoTIFF 生成時に画素を読めるようにする
+      layer = L.tileLayer(info.url, L.extend(opts, { subdomains: info.subdomains || 'abc', crossOrigin: 'anonymous', errorTileUrl: TRANSPARENT, attribution: info.attribution || '', bounds: undefined }));
+    } else if (opened.kind === 'electron') {
       layer = L.tileLayer('mdtile://' + info.token + '/{z}/{x}/{y}', L.extend(opts, { errorTileUrl: TRANSPARENT, crossOrigin: false }));
     } else {
       var src = opened.kind === 'handle' ? new HandleSource(info) : new FileListSource(info);
@@ -161,6 +164,9 @@
   function makeSource(opened, tms) {
     var info = opened.info || opened.det, urls = [];
     var flip = function (z, y) { return tms ? Math.pow(2, z) - 1 - y : y; };
+    if (opened.kind === 'web') {
+      return { levels: info.levels, web: true, getUrl: function (z, x, y) { return Promise.resolve(webUrl(info, z, x, flip(z, y))); }, release: function () {} };
+    }
     if (opened.kind === 'electron') {
       return { levels: info.levels, getUrl: function (z, x, y) { return Promise.resolve('mdtile://' + info.token + '/' + z + '/' + x + '/' + flip(z, y)); }, release: function () {} };
     }
@@ -172,7 +178,18 @@
     };
   }
 
-  root.MD.Tiles = { makeSource: makeSource,
+  /** Web タイルの URL: {z}{x}{y}{s}{-y} に対応 */
+  function webUrl(info, z, x, y) {
+    var sd = info.subdomains || 'abc';
+    return info.url.replace('{z}', z).replace('{x}', x).replace('{-y}', Math.pow(2, z) - 1 - y).replace('{y}', y).replace('{s}', sd[Math.abs(x + y) % sd.length]);
+  }
+  /** Web タイルの「開いたタイル」情報を作る */
+  function webOpened(o) {
+    var lv = []; for (var z = o.minZ; z <= o.maxZ; z++) lv.push(z);
+    return { kind: 'web', info: { url: o.url, levels: lv, tms: !!o.tms, ext: 'web', subdomains: o.subdomains, attribution: o.attribution || '' } };
+  }
+
+  root.MD.Tiles = { makeSource: makeSource, webOpened: webOpened, webUrl: webUrl,
     detectFromHandle: detectFromHandle, detectFromFileList: detectFromFileList,
     createLayer: createLayer, boundsOf: boundsOf, tile2lat: tile2lat, tile2lng: tile2lng
   };
