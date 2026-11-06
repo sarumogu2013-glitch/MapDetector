@@ -5,6 +5,23 @@
   var $ = function (id) { return document.getElementById(id); };
   if (N) document.body.classList.add('electron');
 
+  // ---- エラーの見える化: 画面に表示し、ヘルプ → エラーログをコピー で取り出せるように
+  var ERRLOG = [], lastErrToast = 0;
+  function reportError(e, where) {
+    var msg = (e && (e.stack || e.message)) || String(e);
+    ERRLOG.push(new Date().toISOString() + ' [' + (where || 'error') + '] ' + msg);
+    if (ERRLOG.length > 100) ERRLOG.shift();
+    console.error(e);
+    var t = document.getElementById('toast');
+    if (t && Date.now() - lastErrToast > 3000) {
+      lastErrToast = Date.now();
+      t.textContent = 'エラーが発生しました: ' + ((e && e.message) || e) + '\n(ヘルプ → エラーログをコピー で詳細を取得できます)'; t.hidden = false;
+      setTimeout(function () { t.hidden = true; }, 8000);
+    }
+  }
+  window.addEventListener('error', function (ev) { if (ev.target && ev.target !== window && (ev.target.tagName === 'IMG' || ev.target.tagName === 'SCRIPT')) return; reportError(ev.error || ev.message, 'error'); });
+  window.addEventListener('unhandledrejection', function (ev) { reportError(ev.reason, 'promise'); });
+
   // ---------------- 状態 ----------------
   var S = {
     zone: 9,
@@ -34,6 +51,28 @@
   map.attributionControl.setPrefix('MapDetector ' + VERSION);
   L.control.scale({ imperial: false, maxWidth: 160 }).addTo(map);
   S.ptLayer = L.layerGroup().addTo(map);
+  // ツールバー (主要機能) — 起動処理の最初に作る (後続の初期化でエラーが出てもツールバーは残る)
+  try { if (MD.Toolbar) {
+    // 計測ツール (距離・面積・円) と DXF 出力をツールバーに追加
+    var IC = MD.Toolbar.ICONS;
+    IC.ruler = '<path d="M3 17 17 3l4 4L7 21z"/><path d="M7 13l2 2M10 10l2 2M13 7l2 2"/>';
+    IC.area = '<path d="M4 7 11 3l9 5-3 11H6z"/><path d="M9 12h6" opacity=".6"/>';
+    IC.circleR = '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="1.2"/><path d="M12 12h8.5"/>';
+    IC.exportT = '<rect x="3" y="3" width="8" height="8"/><rect x="13" y="3" width="8" height="8"/><rect x="3" y="13" width="8" height="8"/><path d="M17 13v8M14 18l3 3 3-3"/>';
+    IC.web = '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/>';
+    IC.dxf = '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="M8.5 16.5l3-5 3 5z"/>';
+    var items = MD.Toolbar.DEFAULT_ITEMS.slice(), at = items.findIndex(function (x) { return x.id === 'tool.snapToggle'; });
+    items.splice(at + 1, 0,
+      { group: '計測', id: 'tool.dist', label: '距離', icon: 'ruler', title: '距離を計測 (クリックで点、ダブルクリック/Enter で確定)', toggle: true },
+      { group: '計測', id: 'tool.area', label: '面積', icon: 'area', title: '面積を計測 (クリックで頂点、ダブルクリック/Enter で確定)', toggle: true },
+      { group: '計測', id: 'tool.circle', label: '円', icon: 'circleR', title: '円を計測 (中心からドラッグ)', toggle: true });
+    var cx = items.findIndex(function (x) { return x.id === 'file.exportCsv'; });
+    items.splice(cx + 1, 0, { group: '出力', id: 'file.exportDxf', label: 'DXF出力', icon: 'dxf', title: '計測・取得点を DXF 出力' },
+      { group: '出力', id: 'file.export', label: 'タイル/TIFF', icon: 'exportT', title: '選択範囲をタイルフォルダ / GeoTIFF に書き出し' });
+    var ti = items.findIndex(function (x) { return x.id === 'file.openTiles'; });
+    items.splice(ti + 1, 0, { group: '読込', id: 'file.addWebTiles', label: 'Webタイル', icon: 'web', title: 'Web タイル (地理院地図・OSM・任意 URL) を追加' });
+    MD.Toolbar.mount($('toolbar'), { run: runAction, items: items }); emitState();
+  } } catch (e) { reportError(e, 'ツールバーの初期化'); }
 
   // ---- ホイールズーム: 操作中は今の画面を CSS (translate + scale) で拡大縮小して見せ (タイル解像度は維持)、
   //      手を止めてから一度だけ実際のズームを確定して新しい解像度に切り替える (チラつき防止)。
@@ -2080,6 +2119,10 @@
     'view.home': goHome, 'view.setHome': setHome, 'view.clearHome': clearHome,
     'view.north': function () { setBearing(0); },
     'edit.stations': function () { openStationEditor(); }, 'edit.ipGrid': function () { openIpEditor(); }, 'edit.pointsGrid': function () { openPointsEditor(); },
+    'help.copyErrors': async function () {
+      var txt = 'MapDetector ' + VERSION + (N ? ' (デスクトップ版)' : ' (ブラウザ版)') + '\n' + navigator.userAgent + '\n\n' + (ERRLOG.length ? ERRLOG.join('\n\n') : 'エラーはありません');
+      try { await navigator.clipboard.writeText(txt); toast('エラーログをコピーしました (' + ERRLOG.length + ' 件)'); } catch (e) { alert(txt); }
+    },
     'file.addWebTiles': function () { $('dlgWeb').showModal(); },
     'file.export': function () { if (EX.open) exClose(); else exOpen(); },
     'file.print': function () { if (PR.open) closePrint(); else openPrint(); },
@@ -2158,28 +2201,6 @@
       $('stUpdate').textContent = m[st.state] || '';
     });
   } else buildHtmlMenu();
-  // ツールバー (主要機能)
-  if (MD.Toolbar) {
-    // 計測ツール (距離・面積・円) と DXF 出力をツールバーに追加
-    var IC = MD.Toolbar.ICONS;
-    IC.ruler = '<path d="M3 17 17 3l4 4L7 21z"/><path d="M7 13l2 2M10 10l2 2M13 7l2 2"/>';
-    IC.area = '<path d="M4 7 11 3l9 5-3 11H6z"/><path d="M9 12h6" opacity=".6"/>';
-    IC.circleR = '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="1.2"/><path d="M12 12h8.5"/>';
-    IC.exportT = '<rect x="3" y="3" width="8" height="8"/><rect x="13" y="3" width="8" height="8"/><rect x="3" y="13" width="8" height="8"/><path d="M17 13v8M14 18l3 3 3-3"/>';
-    IC.web = '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/>';
-    IC.dxf = '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="M8.5 16.5l3-5 3 5z"/>';
-    var items = MD.Toolbar.DEFAULT_ITEMS.slice(), at = items.findIndex(function (x) { return x.id === 'tool.snapToggle'; });
-    items.splice(at + 1, 0,
-      { group: '計測', id: 'tool.dist', label: '距離', icon: 'ruler', title: '距離を計測 (クリックで点、ダブルクリック/Enter で確定)', toggle: true },
-      { group: '計測', id: 'tool.area', label: '面積', icon: 'area', title: '面積を計測 (クリックで頂点、ダブルクリック/Enter で確定)', toggle: true },
-      { group: '計測', id: 'tool.circle', label: '円', icon: 'circleR', title: '円を計測 (中心からドラッグ)', toggle: true });
-    var cx = items.findIndex(function (x) { return x.id === 'file.exportCsv'; });
-    items.splice(cx + 1, 0, { group: '出力', id: 'file.exportDxf', label: 'DXF出力', icon: 'dxf', title: '計測・取得点を DXF 出力' },
-      { group: '出力', id: 'file.export', label: 'タイル/TIFF', icon: 'exportT', title: '選択範囲をタイルフォルダ / GeoTIFF に書き出し' });
-    var ti = items.findIndex(function (x) { return x.id === 'file.openTiles'; });
-    items.splice(ti + 1, 0, { group: '読込', id: 'file.addWebTiles', label: 'Webタイル', icon: 'web', title: 'Web タイル (地理院地図・OSM・任意 URL) を追加' });
-    MD.Toolbar.mount($('toolbar'), { run: runAction, items: items }); emitState();
-  }
   updateMaxZoom();
   $('stVersion').textContent = 'v' + VERSION;
   updateTitle();

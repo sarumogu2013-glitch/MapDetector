@@ -1,7 +1,7 @@
 {
   "name": "mapdetector",
   "productName": "MapDetector",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "ローカルタイル表示・座標取得・図面/線形SIMAオーバーレイ (横断線 魚の骨表示)",
   "main": "electron/main.js",
   "author": "sarumogu2013-glitch",
@@ -49,9 +49,12 @@
       ]
     },
     "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "artifactName": "MapDetector-Setup-${version}.${ext}"
+      "oneClick": true,
+      "perMachine": false,
+      "allowElevation": false,
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "MapDetector-Setup-${version}.${ext}",
+      "shortcutName": "MapDetector"
     },
     "publish": [
       {

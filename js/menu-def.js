@@ -64,6 +64,7 @@
     ]},
     { label: 'ヘルプ', items: [
       { id: 'help.checkUpdate', label: '更新を確認...' },
+      { id: 'help.copyErrors', label: 'エラーログをコピー' },
       { id: 'help.about', label: 'バージョン情報' }
     ]}
   ];
