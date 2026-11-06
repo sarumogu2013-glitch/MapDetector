@@ -18,6 +18,8 @@
       { id: 'file.exportSima', label: '取得座標をSIMA出力...' },
       { id: 'file.exportStations', label: '横断線(測点)座標をCSV出力...' },
       { type: 'separator' },
+      { id: 'file.print', label: '印刷 (範囲を指定)...', accel: 'CmdOrCtrl+P' },
+      { type: 'separator' },
       { id: 'app.quit', label: '終了', accel: 'Alt+F4' }
     ]},
     { label: '編集', items: [

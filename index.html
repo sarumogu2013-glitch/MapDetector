@@ -118,11 +118,33 @@
   <span id="stCursor">—</span>
   <span id="stSnap"></span>
   <span id="stZoom"></span>
+  <span class="st-rot" title="地図の回転角 (北から時計回り)。右ドラッグ / Ctrl+ドラッグ / Shift+ホイール / 左上の方位ボタンでも回転">回転 <input type="number" id="numBearing" value="0" step="1" min="-360" max="360">° <button id="btnNorth" title="北を上に戻す">北↑</button></span>
   <span class="spacer"></span>
   <span id="stUpdate"></span>
   <span id="stVersion"></span>
 </footer>
 <div id="toast" hidden></div>
+<div id="printPanel" class="print-panel" hidden>
+  <h3>印刷</h3>
+  <div class="pr-step"><b>1 用紙</b>
+    <select id="prPaper"><option>A4</option><option selected>A3</option><option>A2</option><option>A1</option><option>A0</option></select>
+    <select id="prOrient"><option value="land">横</option><option value="port">縦</option></select>
+    <label>解像度 <select id="prDpi"><option>100</option><option selected>150</option><option>200</option><option>300</option></select> dpi</label>
+    <label>余白 <input type="number" id="prMargin" value="10" min="0" max="40" style="width:3.5em"> mm</label></div>
+  <div class="pr-step"><b>2 範囲</b> 地図上のオレンジの枠をドラッグして配置 <button id="prCenter" type="button">画面中央へ</button></div>
+  <div class="pr-step"><b>3 表示レイヤー</b><div id="prLayers" class="pr-layers"></div>
+    <label class="pr-layer"><input type="checkbox" id="prTexts" checked> 図面の文字</label></div>
+  <div class="pr-step"><b>4 ズームレベル</b> <select id="prZoom"></select></div>
+  <div class="pr-step"><b>5 回転</b>
+    <label><input type="radio" name="prRot" id="prRotKeep" checked> 表示角のまま</label>
+    <label><input type="radio" name="prRot" id="prRotNorth"> 北上</label></div>
+  <div class="pr-step"><b>6 仕上げ</b> <label><input type="checkbox" id="prDeco" checked> 方位図・縮尺バーを自動配置</label>
+    <input type="text" id="prTitle" placeholder="タイトル (任意)"></div>
+  <div id="prInfo" class="info"></div>
+  <div class="row pr-buttons"><button id="prGo" class="primary">印刷...</button><button id="prClose">閉じる</button></div>
+</div>
+<div id="printStage" hidden><div id="printSheet"></div></div>
+<style id="printPageStyle"></style>
 <dialog id="dlgAbout" class="about">
   <form method="dialog">
     <div class="about-logo">🗺️</div>
@@ -141,6 +163,7 @@
 <input type="file" id="inpProject" accept=".mdp,.json" hidden>
 
 <script src="vendor/leaflet/leaflet.js"></script>
+<script src="vendor/leaflet-rotate/leaflet-rotate.js"></script>
 <script src="js/version.js"></script>
 <script src="js/menu-def.js"></script>
 <script src="js/jprcs.js"></script>
