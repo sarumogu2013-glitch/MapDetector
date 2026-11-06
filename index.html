@@ -207,7 +207,11 @@
 </dialog>
 <dialog id="dlgWeb" class="about"><form method="dialog" class="web-form">
   <h3>Web タイルを追加</h3>
-  <label>種類 <select id="webPreset"></select></label>
+  <label>種類 (お気に入り) <select id="webPreset"></select></label>
+  <div class="web-fav"><button id="webSave" type="button" title="下の名前・URL・ズームを一覧に保存 (同じ名前は上書き)">★ 一覧に保存</button>
+    <button id="webUp" type="button" title="選択中の項目を一つ上へ">↑</button>
+    <button id="webDel" type="button" title="選択中の項目を一覧から削除">削除</button>
+    <button id="webReset" type="button" title="一覧を初期値に戻す">初期値に戻す</button></div>
   <label>名前 <input id="webName"></label>
   <label>URL <input id="webUrl" placeholder="https://…/{z}/{x}/{y}.png" style="width:30em"></label>
   <div><label><input type="checkbox" id="webAuto" checked> ズーム範囲を自動判定</label>
