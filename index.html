@@ -25,10 +25,6 @@
       </div>
       <div id="tileInfo" class="info">未読込 — フォルダをドラッグ&ドロップでも開けます</div>
       <div class="row">
-        <label><input type="checkbox" id="chkTms"> TMS (Y反転)</label>
-        <label>不透明度 <input type="range" id="rngTileOpacity" min="0" max="1" step="0.05" value="1"></label>
-      </div>
-      <div class="row">
         <label>背景 <select id="selBase">
           <option value="">なし</option>
           <option value="pale">地理院 淡色</option>
@@ -40,7 +36,7 @@
     </section>
 
     <section>
-      <h2>図面・レイヤー</h2>
+      <h2>レイヤー (タイル・図面・SIMA・取得点・計測)</h2>
       <div class="row">
         <button id="btnOpenDrawing">図面を開く</button>
         <button id="btnOpenSima">線形SIMA</button>
@@ -192,6 +188,7 @@
 <script src="js/sima.js"></script>
 <script src="js/simaxml.js"></script>
 <script src="js/dxf.js"></script>
+<script src="js/dxfwriter.js"></script>
 <script src="js/snap.js"></script>
 <script src="js/tiles.js"></script>
 <script src="js/imageoverlay.js"></script>

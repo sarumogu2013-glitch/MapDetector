@@ -124,7 +124,7 @@
     }
   });
 
-  var COMMON = { maxZoom: 24, keepBuffer: 4, updateWhenZooming: false, updateWhenIdle: false, className: 'md-local-tiles' };
+  var COMMON = { maxZoom: 32, keepBuffer: 4, updateWhenZooming: false, updateWhenIdle: false, className: 'md-local-tiles' };
 
   /**
    * opened: {kind:'electron', info} | {kind:'handle', det} | {kind:'files', det}
