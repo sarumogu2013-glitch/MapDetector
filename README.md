@@ -38,7 +38,7 @@ python3 scripts/make-sample-tiles.py /path/to/tiles
 
 ## バージョンと自動更新
 - バージョンは `package.json` の `version` (0.0.0 形式) だけで管理します。`npm run sync-version` で `js/version.js` を生成し、`npm start` と `npm run build` の前には自動で実行されます。
-- リリース手順: 次を実行し、コミットしてから `v0.1.1` のようなタグを push します。`.github/workflows/release.yml` が Windows インストーラを作って GitHub Releases に公開し、インストール済みのアプリは起動時と6時間ごとに更新を確認して自動更新します。
+- リリース手順: 次を実行してコミット・push するだけです。未リリースのバージョンが push されると `.github/workflows/release.yml` がタグ `v<version>` を作り、 Windows インストーラを作って GitHub Releases に公開し、インストール済みのアプリは起動時と6時間ごとに更新を確認して自動更新します。
   ```bash
   npm version patch --no-git-tag-version
   ```

@@ -1,10 +1,20 @@
 name: Release
 
+# 自動リリース: package.json の version が未リリースのコミットが push されたら
+# タグ v<version> を作成し、Windows インストーラをビルドして GitHub Releases に公開する。
+# (手動でタグ v*.*.* を push しても同様に動く)
 on:
   push:
+    branches:
+      - main
+      - 'claude/**'
     tags:
       - 'v*.*.*'
   workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -17,8 +27,26 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Decide whether to release
+        id: ver
+        shell: bash
+        run: |
+          PKG="$(node -p "require('./package.json').version")"
+          echo "version=$PKG" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          elif git ls-remote --exit-code --tags origin "refs/tags/v$PKG" >/dev/null 2>&1; then
+            echo "v$PKG は既にリリース済み — スキップ"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - uses: actions/setup-node@v4
+        if: steps.ver.outputs.release == 'true'
         with:
           node-version: 20
           cache: npm
@@ -36,12 +64,31 @@ jobs:
           fi
 
       - run: npm ci
+        if: steps.ver.outputs.release == 'true'
 
       - run: npm run sync-version
+        if: steps.ver.outputs.release == 'true'
 
       - run: npm test
+        if: steps.ver.outputs.release == 'true'
 
-      - name: Build and publish (electron-builder)
-        run: npx electron-builder --win --publish always
+      - name: Build installer (electron-builder)
+        if: steps.ver.outputs.release == 'true'
+        run: npx electron-builder --win --publish never
+
+      # ビルド成功後にだけタグ + Release を作成 (失敗時はタグが残らず、次の push で再試行される)
+      - name: Publish GitHub Release
+        if: steps.ver.outputs.release == 'true'
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          V="v${{ steps.ver.outputs.version }}"
+          cd dist
+          FILES=$(ls *.exe *.exe.blockmap latest.yml)
+          echo "$FILES"
+          if gh release view "$V" >/dev/null 2>&1; then
+            gh release upload "$V" $FILES --clobber
+          else
+            gh release create "$V" $FILES --target "$GITHUB_SHA" --title "MapDetector $V" --generate-notes
+          fi
