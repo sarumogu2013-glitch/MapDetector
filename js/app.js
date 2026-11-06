@@ -27,7 +27,9 @@
     zoomSnap: 0, zoomDelta: 0.5, scrollWheelZoom: false,   // ホイールズームは下の自前処理 (即応・滑らか)
     preferCanvas: true, renderer: renderer, attributionControl: true, boxZoom: true,
     // 回転 (leaflet-rotate): 方位ボタンのドラッグ / Shift+ホイール / 右ドラッグ / 2本指
-    rotate: true, bearing: 0, rotateControl: { closeOnZeroBearing: false, position: 'topleft' }, shiftKeyRotate: true, touchRotate: true
+    rotate: true, bearing: 0, rotateControl: { closeOnZeroBearing: false, position: 'topleft' },
+    // leaflet-rotate の Shift+ホイール処理は、Shift なしのホイールで標準ズームを再有効化してしまう (二重ズームの原因) ので使わない
+    shiftKeyRotate: false, touchRotate: true
   });
   map.attributionControl.setPrefix('MapDetector ' + VERSION);
   L.control.scale({ imperial: false, maxWidth: 160 }).addTo(map);
@@ -41,7 +43,12 @@
     var DUR = 160;            // 見かけの拡大縮小アニメ (ms, イーズアウト)
     var SETTLE = 260;         // 最後の入力からズーム確定までの待ち (ms)
     var mk = map.getPane('markerPane');
-    function apply(z) { pane.style.transformOrigin = G.ax + 'px ' + G.ay + 'px'; pane.style.scale = String(Math.pow(2, z)); mk.classList.add('md-zooming'); }
+    // transform-origin は mapPane 自身の座標 (Leaflet の平行移動 pos を引く前) で指定する必要がある
+    function apply(z) {
+      var pos = L.DomUtil.getPosition(pane) || L.point(0, 0);
+      pane.style.transformOrigin = (G.ax - pos.x) + 'px ' + (G.ay - pos.y) + 'px';
+      pane.style.scale = String(Math.pow(2, z)); mk.classList.add('md-zooming');
+    }
     function frame(t) {
       raf = 0; if (!G) return;
       var k = Math.min(1, (t - G.t0) / DUR), e = 1 - Math.pow(1 - k, 3);
@@ -56,8 +63,14 @@
       requestAnimationFrame(function () { mk.classList.remove('md-zooming'); });   // 文字ラベルは確定後にふわっと戻す
       if (Math.abs(g.to) > 1e-6) map.setZoomAround(L.point(g.ax, g.ay), g.z0 + g.to, { animate: false });
     }
+    map.scrollWheelZoom.disable();   // 標準ホイールズームは常に無効 (自前処理と二重にならないように)
     el.addEventListener('wheel', function (e) {
-      if (e.shiftKey) return;   // Shift+ホイールは回転 (leaflet-rotate)
+      if (e.target.closest && e.target.closest('.leaflet-control')) return;
+      if (e.shiftKey) {   // Shift+ホイール: 回転 (1 ノッチ 5°)
+        e.preventDefault(); commit();
+        var d = e.deltaY || e.deltaX; if (d) setBearing(getBearing() + Math.sign(d) * 5);
+        return;
+      }
       if (e.target.closest && e.target.closest('.leaflet-control')) return;
       e.preventDefault();
       var dy = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1);
