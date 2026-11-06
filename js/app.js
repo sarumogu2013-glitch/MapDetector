@@ -35,54 +35,65 @@
   L.control.scale({ imperial: false, maxWidth: 160 }).addTo(map);
   S.ptLayer = L.layerGroup().addTo(map);
 
-  // ---- ホイールズーム: 操作中は今の画面を CSS で拡大縮小して見せ (タイル解像度は維持)、
-  //      手を止めてから一度だけ実際のズームを確定して新しい解像度に切り替える (チラつき防止)
+  // ---- ホイールズーム: 操作中は今の画面を CSS (translate + scale) で拡大縮小して見せ (タイル解像度は維持)、
+  //      手を止めてから一度だけ実際のズームを確定して新しい解像度に切り替える (チラつき防止)。
+  //      見かけの倍率は目標へ指数的に追従 (速度が途切れない)。中心がマウスと一緒に動いても途中で確定しない。
   (function () {
-    var el = map.getContainer(), pane = map.getPane('mapPane'), G = null, raf = 0, timer = 0;
+    var el = map.getContainer(), pane = map.getPane('mapPane'), mk = map.getPane('markerPane');
     var PX_PER_LEVEL = 250;   // ホイール 1 ノッチ (100px) ≒ 0.4 段
-    var DUR = 160;            // 見かけの拡大縮小アニメ (ms, イーズアウト)
-    var SETTLE = 260;         // 最後の入力からズーム確定までの待ち (ms)
-    var mk = map.getPane('markerPane');
-    // transform-origin は mapPane 自身の座標 (Leaflet の平行移動 pos を引く前) で指定する必要がある
-    function apply(z) {
+    var TAU = 70;             // 追従の時定数 (ms) — 小さいほど機敏
+    var SETTLE = 280;         // 追従が終わってからズーム確定までの待ち (ms)
+    var G = null, raf = 0, timer = 0, lastT = 0;
+    // 見かけの変換: 画面座標 = t + s × (元の画面座標)。z = log2(s) を目標 zt へ追従させる
+    function render() {
       var pos = L.DomUtil.getPosition(pane) || L.point(0, 0);
-      pane.style.transformOrigin = (G.ax - pos.x) + 'px ' + (G.ay - pos.y) + 'px';
-      pane.style.scale = String(Math.pow(2, z)); mk.classList.add('md-zooming');
+      pane.style.transformOrigin = (-pos.x) + 'px ' + (-pos.y) + 'px';   // = コンテナ左上
+      pane.style.translate = G.tx + 'px ' + G.ty + 'px';
+      pane.style.scale = String(Math.pow(2, G.z));
+    }
+    function setZ(z) {   // アンカー (マウス位置) を固定したまま倍率を z に
+      var k = Math.pow(2, z - G.z);
+      G.tx = G.ax - k * (G.ax - G.tx); G.ty = G.ay - k * (G.ay - G.ty); G.z = z;
     }
     function frame(t) {
       raf = 0; if (!G) return;
-      var k = Math.min(1, (t - G.t0) / DUR), e = 1 - Math.pow(1 - k, 3);
-      G.cur = G.from + (G.to - G.from) * e; apply(G.cur);
-      if (k < 1) raf = requestAnimationFrame(frame);
+      var dt = Math.min(50, t - (lastT || t)); lastT = t;
+      var d = G.zt - G.z;
+      if (Math.abs(d) < 0.002) { setZ(G.zt); render(); clearTimeout(timer); timer = setTimeout(commit, SETTLE); return; }
+      setZ(G.z + d * (1 - Math.exp(-dt / TAU)));
+      render();
+      raf = requestAnimationFrame(frame);
     }
     function commit() {
       clearTimeout(timer); if (raf) { cancelAnimationFrame(raf); raf = 0; }
       if (!G) return;
       var g = G; G = null;
-      pane.style.scale = ''; pane.style.transformOrigin = '';
+      // 見かけの変換 (t, s) に一致する実ズーム: コンテナ中央に来る地点 = 元の画面座標 (中央 - t) / s
+      var size = map.getSize(), s = Math.pow(2, g.z);
+      var srcCenter = L.point((size.x / 2 - g.tx) / s, (size.y / 2 - g.ty) / s);
+      var center = map.containerPointToLatLng(srcCenter), zoom = g.z0 + g.z;
+      pane.style.scale = ''; pane.style.translate = ''; pane.style.transformOrigin = '';
+      if (Math.abs(g.z) > 1e-6 || Math.abs(g.tx) > 0.5 || Math.abs(g.ty) > 0.5) map.setView(center, zoom, { animate: false });
       requestAnimationFrame(function () { mk.classList.remove('md-zooming'); });   // 文字ラベルは確定後にふわっと戻す
-      if (Math.abs(g.to) > 1e-6) map.setZoomAround(L.point(g.ax, g.ay), g.z0 + g.to, { animate: false });
     }
     map.scrollWheelZoom.disable();   // 標準ホイールズームは常に無効 (自前処理と二重にならないように)
     el.addEventListener('wheel', function (e) {
       if (e.target.closest && e.target.closest('.leaflet-control')) return;
       if (e.shiftKey) {   // Shift+ホイール: 回転 (1 ノッチ 5°)
         e.preventDefault(); commit();
-        var d = e.deltaY || e.deltaX; if (d) setBearing(getBearing() + Math.sign(d) * 5);
+        var dd = e.deltaY || e.deltaX; if (dd) setBearing(getBearing() + Math.sign(dd) * 5);
         return;
       }
-      if (e.target.closest && e.target.closest('.leaflet-control')) return;
       e.preventDefault();
       var dy = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1);
       if (e.ctrlKey) dy *= 3;   // タッチパッドのピンチ
       dy = Math.max(-200, Math.min(200, dy));
-      var r = el.getBoundingClientRect(), ax = e.clientX - r.left, ay = e.clientY - r.top;
-      if (G && Math.hypot(ax - G.ax, ay - G.ay) > 30) commit();   // 中心が動いたら一旦確定
-      if (!G) G = { z0: map.getZoom(), ax: ax, ay: ay, cur: 0, from: 0, to: 0, t0: 0 };
-      var tz = Math.max(map.getMinZoom(), Math.min(map.getMaxZoom(), G.z0 + G.to - dy / PX_PER_LEVEL));
-      G.from = G.cur; G.to = tz - G.z0; G.t0 = performance.now();
+      var r = el.getBoundingClientRect();
+      if (!G) { G = { z0: map.getZoom(), z: 0, zt: 0, tx: 0, ty: 0, ax: 0, ay: 0 }; lastT = 0; mk.classList.add('md-zooming'); }
+      G.ax = e.clientX - r.left; G.ay = e.clientY - r.top;   // 中心はその時点のマウス位置 (動いても確定しない)
+      G.zt = Math.max(map.getMinZoom(), Math.min(map.getMaxZoom(), G.z0 + G.zt - dy / PX_PER_LEVEL)) - G.z0;
+      clearTimeout(timer);
       if (!raf) raf = requestAnimationFrame(frame);
-      clearTimeout(timer); timer = setTimeout(commit, DUR + SETTLE);
     }, { passive: false });
     // ドラッグやクリックの前には確定しておく (座標がずれないように)
     el.addEventListener('mousedown', commit, true);
