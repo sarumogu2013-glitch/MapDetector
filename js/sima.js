@@ -353,6 +353,112 @@
       out.parcels.push(curParcel);
     }
 
+    // ---- TREND-ONE 等の形式: 要素レコード (C01 半径 / C02 クロソイド) の後に C04,点番号,IP名 で所属IPを示す
+    //   F00,番号,種別,路線名,番号 / F03,BP追加距離,... / B01,点 + B03,追加距離 / B04,中心点番号,測点名,追加距離,幅
+    if (recs.some(function (r) { return r.code === 'C04'; })) {
+      var blocks = [], cur = null;
+      recs.forEach(function (r) {
+        var c = r.code, f = r.f;
+        if (c === 'F00') {
+          var nm = '';
+          for (var i = 1; i < f.length; i++) if (f[i] && !isNum(f[i])) { nm = f[i]; break; }
+          cur = { no: f[0] || String(blocks.length + 1), name: nm || ('路線' + (blocks.length + 1)), pts: [], elems: [], start: null, line: r.line };
+          blocks.push(cur); return;
+        }
+        if (!cur) return;
+        if (c === 'F99') { cur = null; return; }
+        if (c === 'F03' && cur.start == null && isNum(f[0])) { cur.start = num(f[0]); return; }
+        if (c === 'B01') {
+          var p = findNo(f[0]); if (p && f[1] && normName(p.name) !== normName(f[1]) && findName(f[1])) p = findName(f[1]);
+          if (!p) p = findName(f[1]);
+          if (p) cur.pts.push({ name: p.name, no: p.no, e: p.e, n: p.n, ch: null, ref: null, off: null, elem: null });
+          else out.warnings.push('行 ' + r.line + ': B01 の点 ' + f.join(',') + ' が見つかりません');
+          return;
+        }
+        var last = cur.pts[cur.pts.length - 1];
+        if (c === 'B03' && last && isNum(f[0])) { last.ch = num(f[0]); return; }
+        if (c === 'B04' && last) {
+          // B04,中心点番号,測点名,追加距離,幅
+          var nums = f.map(function (x) { return isNum(x) ? num(x) : NaN; });
+          last.ch = isFinite(nums[2]) ? nums[2] : last.ch; last.off = isFinite(nums[3]) ? nums[3] : null; last.ref = f[1] || '';
+          return;
+        }
+        if (c === 'C01' || c === 'C02') {
+          // C01,種別,半径 (符号: 曲がる向き) / C02,種別,A  — 種別が無い形式 (C01,R) にも対応
+          var v = f.length >= 2 && isNum(f[1]) ? num(f[1]) : num(f[0]);
+          cur.pendingElem = { type: c === 'C01' ? 'arc' : 'clothoid', v: v, line: r.line };
+          return;
+        }
+        if (c === 'C04') {
+          var ipPt = findNo(f[0]) || findName(f[1]);
+          if (!ipPt) { out.warnings.push('行 ' + r.line + ': C04 の IP ' + f.join(',') + ' が見つかりません'); return; }
+          var el = cur.pendingElem || { type: 'arc', v: 0, line: r.line };
+          el.ip = ipPt; el.afterPt = cur.pts.length - 1;
+          cur.elems.push(el); cur.pendingElem = null;
+          return;
+        }
+      });
+      var main = blocks.filter(function (b) { return b.elems.length; });
+      // 測点 (B03) の多い路線を中心線とみなす。IP/半径は要素レコードから
+      main.sort(function (a, b) { return b.pts.filter(function (p) { return p.ch != null; }).length - a.pts.filter(function (p) { return p.ch != null; }).length; });
+      if (main.length) {
+        var m0 = main[0], ipOrder = [], ipMap = {};
+        main.forEach(function (b) {
+          b.elems.forEach(function (el) {
+            var key = el.ip.no + '|' + el.ip.name, ent = ipMap[key];
+            if (!ent) { ent = ipMap[key] = { pt: el.ip, R: 0, sign: 0, seq: [], first: Infinity }; ipOrder.push(ent); }
+            if (b === m0 || !ent.seq.length) {
+              if (b !== m0 || ent.src !== b) { if (ent.src && ent.src !== b) return; ent.src = b; }
+              ent.seq.push(el);
+            }
+          });
+        });
+        var rw = [];
+        ipOrder.forEach(function (ent) {
+          var arcs = ent.seq.filter(function (e) { return e.type === 'arc' && e.v; });
+          ent.R = arcs.length ? Math.abs(arcs[0].v) : 0;
+          ent.sign = arcs.length ? Math.sign(arcs[0].v) : 0;
+          if (arcs.some(function (a) { return Math.abs(Math.abs(a.v) - ent.R) > 1e-6; })) rw.push(ent.pt.name + ': 複合曲線 (半径が複数) は最初の半径 ' + ent.R + ' で計算します');
+          var firstArc = ent.seq.findIndex(function (e) { return e.type === 'arc'; });
+          ent.A1 = 0; ent.A2 = 0;
+          ent.seq.forEach(function (e, i) { if (e.type === 'clothoid' && e.v) { if (firstArc < 0 || i < firstArc) ent.A1 = Math.abs(e.v); else ent.A2 = Math.abs(e.v); } });
+        });
+        var bp = m0.pts[0], ep = m0.pts[m0.pts.length - 1];
+        var ips = [{ name: bp.name, e: bp.e, n: bp.n, R: 0, A1: 0, A2: 0 }].concat(ipOrder.map(function (ent) {
+          return { name: ent.pt.name, e: ent.pt.e, n: ent.pt.n, R: ent.R, A1: ent.A1, A2: ent.A2, dir: ent.sign < 0 ? 'R' : ent.sign > 0 ? 'L' : '' };
+        }), [{ name: ep.name, e: ep.e, n: ep.n, R: 0, A1: 0, A2: 0 }]);
+        // 測点 (中心) と幅杭 (B04) を照合用に収集
+        var check = [], offs = [];
+        blocks.forEach(function (b) {
+          b.pts.forEach(function (p) {
+            if (p.ch == null) return;
+            if (p.off != null) {
+              var side = /左|_L|L\d*$/i.test(b.name + ' ' + p.name) && !/右/.test(b.name) ? 1 : /右|_R|R\d*$/i.test(b.name + ' ' + p.name) ? -1 : 0;
+              check.push({ name: p.name, chainage: p.ch, e: p.e, n: p.n, off: side * p.off, sideKnown: !!side });
+              offs.push({ side: side, w: p.off });
+            } else if (b === m0) check.push({ name: p.name, chainage: p.ch, e: p.e, n: p.n, off: 0, sideKnown: true });
+          });
+        });
+        var start = m0.start != null ? m0.start : (bp.ch != null ? bp.ch : 0);
+        // 測点間隔: 中心線の追加距離のうち整数m刻みの差の最頻値
+        var chs = m0.pts.map(function (p) { return p.ch; }).filter(function (v) { return v != null && Math.abs(v - Math.round(v)) < 1e-6; }).sort(function (a, b) { return a - b; });
+        var hist = {}; for (var hi = 1; hi < chs.length; hi++) { var d = Math.round(chs[hi] - chs[hi - 1]); if (d > 0) hist[d] = (hist[d] || 0) + 1; }
+        var pitch = Object.keys(hist).sort(function (a, b) { return hist[b] - hist[a]; })[0];
+        var wl = offs.filter(function (o) { return o.side > 0; }).map(function (o) { return o.w; });
+        var wr = offs.filter(function (o) { return o.side < 0; }).map(function (o) { return o.w; });
+        var route = { no: m0.no, name: (out.title ? out.title + ' ' : '') + m0.name, ips: ips, warnings: rw, startChainage: start,
+          pitch: pitch ? +pitch : null, widths: { left: wl.length ? Math.max.apply(null, wl) : null, right: wr.length ? Math.max.apply(null, wr) : null },
+          check: check, format: 'element-ref' };
+        // 線形以外の路線 (IP線・幅杭など) は参照線として返す
+        out.lines = blocks.filter(function (b) { return b !== m0 && b.pts.length >= 2 && !b.elems.length; }).map(function (b) {
+          var ps = b.pts.slice();
+          if (ps.every(function (p) { return p.ch != null; })) ps.sort(function (a, c) { return a.ch - c.ch; });   // 幅杭は追加距離順
+          return { no: b.no, name: b.name, pts: ps.map(function (p) { return { e: p.e, n: p.n, name: p.name }; }) };
+        });
+        out.routes = [route];
+      }
+    }
+
     // ---- fallback: route from BP / IP.n / EP point names
     if (!out.routes.length) {
       var named = [];
