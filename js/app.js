@@ -1167,7 +1167,18 @@
     PR.selecting = true; $('map').classList.add('picking'); map.dragging.disable();
     toast('地図上でドラッグして印刷範囲を選択 (左上 → 右下など)', 5000);
   };
-  map.on('mousedown', function (e) { if (!PR.selecting) return; L.DomEvent.stop(e); PR.selStart = toP(e.latlng); });
+  map.on('mousedown', function (e) { if (!PR.selecting) return; if (e.originalEvent) e.originalEvent.preventDefault(); PR.selStart = toP(e.latlng); });
+  // 印刷パネルは見出しをドラッグして移動できる (地図の範囲選択の邪魔にならないように)
+  (function () {
+    var pnl = $('printPanel'), hd = pnl.querySelector('h3'), d = null;
+    hd.addEventListener('mousedown', function (ev) { var r = pnl.getBoundingClientRect(); d = { x: ev.clientX - r.left, y: ev.clientY - r.top }; ev.preventDefault(); });
+    document.addEventListener('mousemove', function (ev) {
+      if (!d) return;
+      pnl.style.left = Math.max(0, Math.min(window.innerWidth - 80, ev.clientX - d.x)) + 'px';
+      pnl.style.top = Math.max(0, Math.min(window.innerHeight - 40, ev.clientY - d.y)) + 'px'; pnl.style.right = 'auto';
+    });
+    document.addEventListener('mouseup', function () { d = null; });
+  })();
   map.on('mousemove', function (e) {
     if (!PR.selecting || !PR.selStart) return;
     var o = prOpt(), ax = prAxes(o), A = PR.selStart, C = toP(e.latlng);
@@ -1381,14 +1392,16 @@
     printNow();
   }
   function printNow() {
-    var zoom = $('printSheet').style.zoom;
-    $('printSheet').style.zoom = '';
-    var after = function () {
+    // プレビュー表示用の配置・倍率を外してから印刷し、終わったら戻す
+    var sh = $('printSheet'), zoom = sh.style.zoom, wasPv = document.body.classList.contains('previewing');
+    sh.style.zoom = ''; document.body.classList.remove('previewing');
+    var done = false, after = function () {
+      if (done) return; done = true;
       window.removeEventListener('afterprint', after);
-      if (document.body.classList.contains('previewing')) $('printSheet').style.zoom = zoom; else if (!PR.keepStage) clearStage();
+      if (wasPv) { document.body.classList.add('previewing'); sh.style.zoom = zoom; } else if (!PR.keepStage) clearStage();
     };
     window.addEventListener('afterprint', after);
-    setTimeout(function () { window.print(); if (!document.body.classList.contains('previewing') && !PR.keepStage) setTimeout(after, 300); }, 50);
+    setTimeout(function () { window.print(); setTimeout(after, 300); }, 50);
   }
   function showPreview(o, n) {
     document.body.classList.add('previewing');
