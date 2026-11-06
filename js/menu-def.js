@@ -1,10 +1,15 @@
 // メニューバー定義 (Electron ネイティブメニューとブラウザ版HTMLメニューで共通)。
 // id を持つ項目はクリック時に id がレンダラーへ通知される。role はElectron標準動作。
-// main 側で処理する id: app.quit, help.checkUpdate, help.about, view.devtools, view.reload, view.fullscreen
+// main 側で処理する id: app.quit, help.checkUpdate, view.devtools, view.reload, view.fullscreen
 (function (root) {
   root.MD = root.MD || {};
   root.MD.MenuDef = [
     { label: 'ファイル', items: [
+      { id: 'file.new', label: '新規', accel: 'CmdOrCtrl+N' },
+      { id: 'file.openProject', label: 'プロジェクトを開く...', accel: 'CmdOrCtrl+Shift+O' },
+      { id: 'file.save', label: '上書き保存', accel: 'CmdOrCtrl+S' },
+      { id: 'file.saveAs', label: '名前を付けて保存...', accel: 'CmdOrCtrl+Shift+S' },
+      { type: 'separator' },
       { id: 'file.openTiles', label: 'タイルフォルダを開く...', accel: 'CmdOrCtrl+O' },
       { id: 'file.openDrawing', label: '図面を開く (DXF/GeoJSON/画像)...', accel: 'CmdOrCtrl+D' },
       { id: 'file.openSima', label: '線形SIMAを開く (CSV/XML)...', accel: 'CmdOrCtrl+L' },

@@ -7,6 +7,7 @@
 <title>MapDetector</title>
 <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
 <link rel="stylesheet" href="css/app.css">
+<link rel="stylesheet" href="css/grid.css">
 </head>
 <body>
 <nav id="menubar" class="menubar" hidden></nav>
@@ -71,7 +72,7 @@
         <label><input type="checkbox" id="chkIpLine" checked> IP線</label>
       </div>
       <details>
-        <summary>IP表 (編集可)</summary>
+        <summary>IP表 (編集可) <button id="btnIpGrid" type="button" title="画面下の表で編集 (Excel とコピペ可)">表で編集</button></summary>
         <table class="tbl" id="tblIp"><thead><tr><th>点名</th><th>X</th><th>Y</th><th>R</th><th>A1</th><th>A2</th><th></th></tr></thead><tbody></tbody></table>
         <div class="row"><button id="btnAddIp">行追加</button><button id="btnApplyIp">反映</button></div>
       </details>
@@ -94,12 +95,24 @@
         <label><input type="checkbox" data-snap="near" checked>線上</label>
       </div>
       <div class="row">
-        <button id="btnCopy">コピー</button><button id="btnCsv">CSV</button><button id="btnSimaOut">SIMA</button><button id="btnClear">全削除</button>
+        <button id="btnCopy">コピー</button><button id="btnCsv">CSV</button><button id="btnSimaOut">SIMA</button><button id="btnClear">全削除</button><button id="btnPtsGrid" title="画面下の表で編集 (Excel とコピペ可)">表で編集</button>
       </div>
       <div class="tblwrap"><table class="tbl" id="tblPts"><thead><tr><th>No</th><th>点名</th><th>X</th><th>Y</th><th>種別</th><th>測点/離れ</th><th></th></tr></thead><tbody></tbody></table></div>
     </section>
   </aside>
 </div>
+<section id="dock" hidden>
+  <div class="dock-head">
+    <strong id="dockTitle">表の編集</strong>
+    <span class="dock-hint">セル選択 → 入力 / Ctrl+C・Ctrl+V で Excel とコピペ / Delete で消去 / Ctrl+Z で元に戻す / 右クリックで行の挿入・削除</span>
+    <span class="spacer"></span>
+    <span id="dockButtons"></span>
+    <button id="dockAddRow">行追加</button>
+    <button id="dockDelRow">行削除</button>
+    <button id="dockClose" title="閉じる">×</button>
+  </div>
+  <div id="dockGrid"></div>
+</section>
 <footer id="status">
   <span id="stCursor">—</span>
   <span id="stSnap"></span>
@@ -109,7 +122,22 @@
   <span id="stVersion"></span>
 </footer>
 <div id="toast" hidden></div>
-<dialog id="dlgAbout"><form method="dialog"><h3>MapDetector</h3><p id="aboutText"></p><button>OK</button></form></dialog>
+<dialog id="dlgAbout" class="about">
+  <form method="dialog">
+    <div class="about-logo">🗺️</div>
+    <h3>MapDetector</h3>
+    <p id="aboutVersion" class="about-ver"></p>
+    <p id="aboutEdition" class="about-ed"></p>
+    <p class="about-desc">ローカルタイル表示・座標取得・図面/線形SIMAオーバーレイ</p>
+    <p class="about-links">
+      <a href="https://github.com/sarumogu2013-glitch/MapDetector" target="_blank" rel="noopener">GitHub リポジトリ</a><br>
+      <a href="https://github.com/sarumogu2013-glitch/MapDetector/releases" target="_blank" rel="noopener">リリース一覧 (更新履歴)</a>
+    </p>
+    <p class="about-copy">地図: <a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank" rel="noopener">地理院タイル</a> / <a href="https://leafletjs.com/" target="_blank" rel="noopener">Leaflet</a></p>
+    <button autofocus>OK</button>
+  </form>
+</dialog>
+<input type="file" id="inpProject" accept=".mdp,.json" hidden>
 
 <script src="vendor/leaflet/leaflet.js"></script>
 <script src="js/version.js"></script>
@@ -122,6 +150,7 @@
 <script src="js/snap.js"></script>
 <script src="js/tiles.js"></script>
 <script src="js/imageoverlay.js"></script>
+<script src="js/grid.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

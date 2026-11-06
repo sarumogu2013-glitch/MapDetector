@@ -77,7 +77,7 @@
   function isTyping() { var a = document.activeElement; return a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.tagName === 'SELECT' || a.isContentEditable); }
 
   // ---------------- タイル ----------------
-  function setTiles(opened, name) {
+  function setTiles(opened, name, opt) {
     if (S.tile) S.tile.layer.remove();
     var info = opened.info || opened.det;
     var tms = !!info.tms;
@@ -86,9 +86,10 @@
     layer.setOpacity(+$('rngTileOpacity').value);
     layer.addTo(map);
     S.tile = { opened: opened, layer: layer, name: name };
+    markDirty();
     var lv = info.levels;
     $('tileInfo').textContent = name + '\nズーム ' + lv[0] + '–' + lv[lv.length - 1] + ' / ' + (info.ext || '') + (info.count ? ' / ' + info.count + '枚' : '') + (tms ? ' / TMS' : '');
-    fitTiles(true);
+    if (!(opt && opt.noFit)) fitTiles(true);
   }
   function fitTiles(autoZone) {
     if (!S.tile) return;
@@ -106,7 +107,7 @@
     fitTiles(false);
   }
   $('rngTileOpacity').oninput = function () { if (S.tile) S.tile.layer.setOpacity(+this.value); };
-  $('selBase').onchange = function () { setBase(this.value); };
+  $('selBase').onchange = function () { setBase(this.value); markDirty(); };
 
   async function openTiles() {
     try {
@@ -218,10 +219,13 @@
     S.snap.setGroupEnabled && S.snap.setGroupEnabled(o.id, o.visible && o.snap);
     updateTextVisibility();
   }
-  function addOverlay(o) {
+  function addOverlay(o, rs) {
     o.id = 'ov' + (S.nextId++); o.visible = true; o.snap = o.kind !== 'image';
+    if (rs) { if (rs.label) o.name = rs.label; if (rs.visible != null) o.visible = rs.visible; if (rs.snap != null) o.snap = rs.snap; if (rs.color) o.color = rs.color; }
+    if (o.kind === 'image') o.layer.on('change', markDirty);
+    markDirty();
     S.overlays.push(o);
-    if (o.kind === 'image') o.layer.addTo(map); else rebuildOverlay(o);
+    if (o.kind === 'image') { if (o.visible) o.layer.addTo(map); } else rebuildOverlay(o);
     renderLayerList();
   }
   function removeOverlay(o) {
@@ -229,7 +233,7 @@
     S.snap.removeGroup(o.id);
     S.overlays.splice(S.overlays.indexOf(o), 1);
     if (o.url) URL.revokeObjectURL(o.url);
-    renderLayerList();
+    renderLayerList(); markDirty();
   }
   function renderLayerList() {
     var ul = $('layerList'); ul.innerHTML = '';
@@ -238,19 +242,20 @@
       li.innerHTML = '<input type="checkbox" class="vis" title="表示"' + (o.visible ? ' checked' : '') + '>' +
         '<span class="name" title="' + esc(o.name) + '">' + esc(o.name) + '</span>' +
         (o.kind === 'image' ? '<input type="range" class="op" min="0" max="1" step="0.05" value="' + o.layer.options.opacity + '" title="不透明度"><label title="位置合わせハンドル"><input type="checkbox" class="ed" checked>調整</label>'
-          : '<label title="スナップ対象"><input type="checkbox" class="sn"' + (o.snap ? ' checked' : '') + '>snap</label><button class="fit" title="全体表示">⤢</button>') +
+          : '<label title="スナップ対象"><input type="checkbox" class="sn"' + (o.snap ? ' checked' : '') + '>snap</label>' + (o.kind === 'sima' ? '<button class="edit" title="座標点を表で編集">編集</button>' : '') + '<button class="fit" title="全体表示">⤢</button>') +
         '<button class="x" title="削除">×</button>';
       li.querySelector('.vis').onchange = function () {
-        o.visible = this.checked;
+        o.visible = this.checked; markDirty();
         if (o.visible) o.layer.addTo(map); else o.layer.remove();
         if (S.snap.setGroupEnabled && o.kind !== 'image') S.snap.setGroupEnabled(o.id, o.visible && o.snap);
         updateTextVisibility();
       };
-      var sn = li.querySelector('.sn'); if (sn) sn.onchange = function () { o.snap = this.checked; S.snap.setGroupEnabled && S.snap.setGroupEnabled(o.id, o.visible && o.snap); };
-      var op = li.querySelector('.op'); if (op) op.oninput = function () { o.layer.setOpacity(+this.value); };
-      var ed = li.querySelector('.ed'); if (ed) ed.onchange = function () { o.layer.setEditable(this.checked); };
+      var sn = li.querySelector('.sn'); if (sn) sn.onchange = function () { o.snap = this.checked; markDirty(); S.snap.setGroupEnabled && S.snap.setGroupEnabled(o.id, o.visible && o.snap); };
+      var op = li.querySelector('.op'); if (op) op.oninput = function () { o.layer.setOpacity(+this.value); markDirty(); };
+      var ed = li.querySelector('.ed'); if (ed) { ed.checked = o.layer._editable !== false; ed.onchange = function () { o.layer.setEditable(this.checked); markDirty(); }; }
       var fit = li.querySelector('.fit'); if (fit) fit.onclick = function () { try { map.fitBounds(o.layer.getBounds(), { maxZoom: 20 }); } catch (e) { /* empty */ } };
-      li.querySelector('.x').onclick = function () { removeOverlay(o); };
+      var edb = li.querySelector('.edit'); if (edb) edb.onclick = function () { openSimaEditor(o); };
+      li.querySelector('.x').onclick = function () { if (DOCK.target === o) closeDock(); removeOverlay(o); };
       ul.appendChild(li);
     });
   }
@@ -269,15 +274,21 @@
   $('btnOpenDrawing').onclick = openDrawing;
   $('btnOpenSima').onclick = openSima;
 
-  function loadDrawing(name, data) {
+  // opt.restore: プロジェクト復元時 (保存された状態を適用し、表示範囲の移動やメッセージを抑止)
+  function loadDrawing(name, data, opt) {
+    opt = opt || {};
+    var rs = opt.restore || null;
     var ext = (name.split('.').pop() || '').toLowerCase();
+    var src = { name: name, data: data };
     try {
       if (ext === 'dxf') {
+        var dxfOpts = rs && rs.dxfOpts ? rs.dxfOpts : { swapXY: $('chkDxfSwap').checked, scale: +$('selDxfScale').value };
         var text = MD.DXF.decode(data);
-        var res = MD.DXF.parse(text, { swapXY: $('chkDxfSwap').checked, scale: +$('selDxfScale').value });
+        var res = MD.DXF.parse(text, dxfOpts);
         if (!res.shapes.length) throw new Error('図形がありません');
-        addOverlay({ name: name, kind: 'dxf', shapes: res.shapes });
+        addOverlay({ name: name, kind: 'dxf', shapes: res.shapes, src: src, dxfOpts: dxfOpts }, rs);
         var o = S.overlays[S.overlays.length - 1];
+        if (rs) return;
         if (res.bounds) {
           var b = L.latLngBounds(toLL({ e: res.bounds.minE, n: res.bounds.minN }), toLL({ e: res.bounds.maxE, n: res.bounds.maxN }));
           if (!map.getBounds().intersects(b) || !S.tile) map.fitBounds(b, { maxZoom: 20 });
@@ -286,10 +297,16 @@
         void o;
       } else if (ext === 'geojson' || ext === 'json') {
         var gj = JSON.parse(new TextDecoder('utf-8').decode(data));
-        addOverlay({ name: name, kind: 'geojson', geo: gj, color: '#7c3aed' });
+        addOverlay({ name: name, kind: 'geojson', geo: gj, color: '#7c3aed', src: src }, rs);
+        if (rs) return;
         try { map.fitBounds(S.overlays[S.overlays.length - 1].layer.getBounds(), { maxZoom: 19 }); } catch (e) { /* empty */ }
       } else if (/^(png|jpe?g|gif|webp|bmp)$/.test(ext)) {
         var url = URL.createObjectURL(new Blob([data]));
+        if (rs && rs.image) {
+          var lay = new MD.AffineImage(url, rs.image.corners.map(function (c) { return L.latLng(c[0], c[1]); }), { opacity: rs.image.opacity, editable: rs.image.editable });
+          addOverlay({ name: name, kind: 'image', layer: lay, url: url, shapes: [], src: src }, rs);
+          return;
+        }
         var img = new Image();
         img.onload = function () {
           // 現在表示範囲の 70% に縦横比を保って配置
@@ -299,23 +316,36 @@
           var tr = map.containerPointToLatLng([cx + w * sc / 2, cy - h * sc / 2]);
           var bl = map.containerPointToLatLng([cx - w * sc / 2, cy + h * sc / 2]);
           var layer = new MD.AffineImage(url, [tl, tr, bl], { opacity: 0.6 });
-          addOverlay({ name: name, kind: 'image', layer: layer, url: url, shapes: [] });
+          addOverlay({ name: name, kind: 'image', layer: layer, url: url, shapes: [], src: src });
           toast('赤い丸(左上/右上/左下)と中央の✥をドラッグして位置合わせ', 6000);
         };
         img.src = url;
-      } else if (ext === 'sim' || ext === 'xml') { loadSima(name, data); }
+      } else if (ext === 'sim' || ext === 'xml') { loadSima(name, data, opt); }
       else throw new Error('未対応の形式: ' + ext);
     } catch (e) { toast(name + ' を読めません: ' + e.message, 6000); console.error(e); }
   }
 
   // ---------------- 線形 (SIMA / IP) ----------------
-  function loadSima(name, data) {
+  /** SIMA 座標点 (表で編集可能な行) + 画地/線 → 表示・スナップ用図形 */
+  function simaShapes(o) {
+    var out = [];
+    o.points.forEach(function (p) {
+      var x = +p.x, y = +p.y; if (!isFinite(x) || !isFinite(y) || p.x === '' || p.y === '') return;
+      out.push({ type: 'point', p: { e: y, n: x }, name: p.name, layer: 'sima', color: '#0369a1' });
+      if (p.name) out.push({ type: 'text', p: { e: y, n: x }, text: String(p.name), h: 1, rot: 0, layer: 'sima', color: '#0369a1' });
+    });
+    return out.concat(o.extraShapes || []);
+  }
+  function loadSima(name, data, opt) {
+    opt = opt || {};
+    var rs = opt.restore || null;
     try {
       var text = MD.SIMA.decode(data);
       var isXml = MD.SIMAXML && MD.SIMAXML.isSimaXml(text);
       var res = isXml ? MD.SIMAXML.parse(text) : MD.SIMA.parse(text);
-      if (res.zone && res.zone !== S.zone) setZone(res.zone);
+      if (!rs && res.zone && res.zone !== S.zone) setZone(res.zone);
       var routes = (res.routes || []).filter(function (r) { return r.ips && r.ips.length >= 2; });
+      if (rs) routes = [];   // 路線はプロジェクトに保存された内容 (IP表の編集を含む) を使う
       if (routes.length) {
         routes.forEach(function (r) { r.label = name + ' : ' + (r.name || ('路線' + (r.no || ''))); });
         S.route.list = S.route.list.concat(routes);
@@ -323,20 +353,23 @@
         selectRoute(S.route.list.length - routes.length);
         fitRoute();
       }
-      var shapes = [];
-      (res.points || []).forEach(function (p) {
-        shapes.push({ type: 'point', p: { e: p.e, n: p.n }, name: p.name, layer: 'sima', color: '#0369a1' });
-        if (p.name) shapes.push({ type: 'text', p: { e: p.e, n: p.n }, text: p.name, h: 1, rot: 0, layer: 'sima', color: '#0369a1' });
-      });
+      var extra = [];
+      var ptRows = rs && rs.points ? rs.points : (res.points || []).map(function (p) { return { no: p.no, name: p.name, x: p.n, y: p.e, z: p.z || 0 }; });
+      var shapes = extra;
       (res.parcels || []).forEach(function (pc) {
         if (pc.pts && pc.pts.length >= 3) shapes.push({ type: 'polyline', pts: pc.pts.map(function (q) { return { e: q.e, n: q.n }; }), closed: true, layer: '画地', color: '#b45309', name: pc.name });
       });
       (res.lines || []).forEach(function (ln) { shapes.push({ type: 'polyline', pts: ln.pts.map(function (q) { return { e: q.e, n: q.n }; }), closed: false, layer: '開放型画地', color: '#9333ea', name: ln.name }); });
-      if (shapes.length) {
-        var cnt = [(res.points || []).length + '点', (res.parcels || []).length ? res.parcels.length + '画地' : '', (res.lines || []).length ? res.lines.length + '線' : ''].filter(Boolean).join(' ');
-        addOverlay({ name: name + ' (' + cnt + ')', kind: 'sima', shapes: shapes });
+      if (ptRows.length || extra.length) {
+        var cnt = [ptRows.length + '点', (res.parcels || []).length ? res.parcels.length + '画地' : '', (res.lines || []).length ? res.lines.length + '線' : ''].filter(Boolean).join(' ');
+        var so = { name: name + ' (' + cnt + ')', kind: 'sima', points: ptRows, extraShapes: extra, src: { name: name, data: data } };
+        so.shapes = simaShapes(so);
+        if (rs && rs.points) so.pointsEdited = true;
+        addOverlay(so, rs);
+        if (rs) return;
         if (!routes.length) { try { map.fitBounds(S.overlays[S.overlays.length - 1].layer.getBounds(), { maxZoom: 19 }); } catch (e) { /* 点のみ */ } }
       }
+      if (rs) return;
       var w = (res.warnings || []).concat.apply(res.warnings || [], routes.map(function (r) { return r.warnings || []; }));
       toast(name + (isXml ? ' [JPGIS XML' + (res.zone ? ' ' + ROMAN[res.zone] + '系' : '') + ']' : '') + ': 路線 ' + routes.length + ' / 座標 ' + (res.points || []).length + '点' + (w.length ? '\n警告: ' + w.slice(0, 3).join(' / ') : ''), 6000);
     } catch (e) { toast('SIMAを読めません: ' + e.message, 6000); console.error(e); }
@@ -396,6 +429,8 @@
   }
   function rebuildRoute() {
     var R = S.route;
+    markDirty();
+    if (DOCK.kind === 'ip' && !DOCK.updating && DOCK.grid) DOCK.grid.setRows(ipRows());
     if (R.layer) { R.layer.remove(); R.layer = null; }
     if (R.labelLayer) { R.labelLayer.remove(); R.labelLayer = null; }
     R.bones = [];
@@ -577,6 +612,8 @@
     refreshPoints();
   }
   function refreshPoints() {
+    markDirty();
+    if (DOCK.kind === 'points' && !DOCK.updating && DOCK.grid) DOCK.grid.setRows(ptRowsOf());
     S.ptLayer.clearLayers();
     var tb = $('tblPts').tBodies[0]; tb.innerHTML = '';
     S.points.forEach(function (pt, idx) {
@@ -634,11 +671,261 @@
   $('btnCsv').onclick = exportCsv; $('btnSimaOut').onclick = exportSima; $('btnCopy').onclick = copyPoints;
   $('btnClear').onclick = function () { if (S.points.length && confirm('取得点をすべて削除しますか?')) { S.points = []; refreshPoints(); } };
 
+  // ---------------- 表の編集ドック (表計算風グリッド) ----------------
+  var DOCK = { grid: null, kind: null, target: null, updating: false };
+  var hlMarker = L.marker([0, 0], { interactive: false, keyboard: false, icon: L.divIcon({ className: 'md-hl', iconSize: null }) });
+  function numOr(v, d) { var x = typeof v === 'number' ? v : MD.Grid.parseNumber(String(v == null ? '' : v)); return isFinite(x) && x !== null ? x : d; }
+  function openDock(cfg) {
+    closeDock(true);
+    $('dock').hidden = false; $('dockTitle').textContent = cfg.title;
+    var bt = $('dockButtons'); bt.innerHTML = '';
+    (cfg.buttons || []).forEach(function (b) { var x = document.createElement('button'); x.textContent = b.label; x.onclick = b.fn; bt.appendChild(x); });
+    map.invalidateSize();
+    DOCK.kind = cfg.kind; DOCK.target = cfg.target || null;
+    DOCK.grid = new MD.Grid($('dockGrid'), {
+      columns: cfg.columns, rows: cfg.rows, newRow: cfg.newRow,
+      height: Math.max(80, $('dockGrid').clientHeight),
+      onChange: function (rows) { DOCK.updating = true; try { cfg.onChange(rows); } finally { DOCK.updating = false; } markDirty(); },
+      onSelect: function (i) { var p = cfg.locate && cfg.locate(DOCK.grid.getRows()[i]); if (p) { var ll = toLL(p); hlMarker.setLatLng(ll).addTo(map); if (!map.getBounds().pad(-0.1).contains(ll)) map.panTo(ll); } else hlMarker.remove(); }
+    });
+    DOCK.grid.focus();
+  }
+  function closeDock(keepHidden) {
+    if (DOCK.grid) { DOCK.grid.destroy(); DOCK.grid = null; }
+    DOCK.kind = null; DOCK.target = null; hlMarker.remove();
+    $('dockGrid').innerHTML = '';
+    if (!keepHidden) { $('dock').hidden = true; map.invalidateSize(); }
+  }
+  $('dockClose').onclick = function () { closeDock(); };
+  $('dockAddRow').onclick = function () { if (DOCK.grid) DOCK.grid.insertRow(); };
+  $('dockDelRow').onclick = function () { if (DOCK.grid) DOCK.grid.deleteSelectedRows(); };
+  new ResizeObserver(function () { if (!$('dock').hidden) map.invalidateSize(); }).observe($('dock'));
+  var COLS_XYZ = [
+    { key: 'no', label: '点番号', type: 'text', width: 70 }, { key: 'name', label: '点名', type: 'text', width: 150 },
+    { key: 'x', label: 'X (北)', type: 'number', width: 120, decimals: 3 }, { key: 'y', label: 'Y (東)', type: 'number', width: 120, decimals: 3 },
+    { key: 'z', label: '標高', type: 'number', width: 80, decimals: 3 }];
+  function locXY(r) { if (!r) return null; var x = numOr(r.x, NaN), y = numOr(r.y, NaN); return isFinite(x) && isFinite(y) ? { e: y, n: x } : null; }
+
+  function openSimaEditor(o) {
+    openDock({
+      kind: 'sima', target: o, title: 'SIMA 座標点の編集 — ' + o.name, columns: COLS_XYZ, rows: o.points,
+      newRow: function (i) { return { no: '', name: '', x: '', y: '', z: 0 }; },
+      locate: locXY,
+      onChange: function (rows) { o.points = rows; o.pointsEdited = true; o.shapes = simaShapes(o); rebuildOverlay(o); },
+      buttons: [{ label: 'SIMA出力', fn: function () {
+        var pts = o.points.filter(function (r) { return locXY(r); }).map(function (r, i) { return { no: r.no || i + 1, name: r.name, n: numOr(r.x, 0), e: numOr(r.y, 0), z: numOr(r.z, 0) }; });
+        saveText(o.src.name.replace(/\.[^.]+$/, '') + '_編集.sim', MD.SIMA.exportPoints(pts, o.src.name), 'shift_jis', [{ name: 'SIMA', extensions: ['sim'] }]);
+      } }]
+    });
+  }
+  function openIpEditor() {
+    if (!S.route.ips.length) S.route.ips = [];
+    openDock({
+      kind: 'ip', title: 'IP表の編集 (線形: ' + ($('selRoute').selectedOptions[0] ? $('selRoute').selectedOptions[0].textContent : '新規') + ')',
+      columns: [{ key: 'name', label: '点名', type: 'text', width: 120 }, { key: 'x', label: 'X (北)', type: 'number', width: 120, decimals: 3 }, { key: 'y', label: 'Y (東)', type: 'number', width: 120, decimals: 3 },
+        { key: 'R', label: 'R', type: 'number', width: 80, decimals: 3 }, { key: 'A1', label: 'A1', type: 'number', width: 80, decimals: 3 }, { key: 'A2', label: 'A2', type: 'number', width: 80, decimals: 3 }],
+      rows: ipRows(),
+      newRow: function () { return { name: '', x: '', y: '', R: 0, A1: 0, A2: 0 }; },
+      locate: locXY,
+      onChange: function (rows) {
+        S.route.ips = rows.filter(function (r) { return locXY(r); }).map(function (r) { return { name: r.name || '', n: numOr(r.x, 0), e: numOr(r.y, 0), R: numOr(r.R, 0), A1: numOr(r.A1, 0), A2: numOr(r.A2, 0) }; });
+        if (S.route.cur < 0 && S.route.ips.length >= 2) { S.route.list.push({ label: '表から作成', ips: S.route.ips }); renderRouteSelect(); S.route.cur = S.route.list.length - 1; $('selRoute').value = S.route.cur; }
+        renderIpTable(); rebuildRoute();
+      }
+    });
+  }
+  function ipRows() { return S.route.ips.map(function (p) { return { name: p.name, x: p.n, y: p.e, R: p.R || 0, A1: p.A1 || 0, A2: p.A2 || 0 }; }); }
+  function openPointsEditor() {
+    openDock({
+      kind: 'points', title: '取得点の編集', columns: COLS_XYZ, rows: ptRowsOf(),
+      newRow: function () { return { no: '', name: '', x: '', y: '', z: 0 }; },
+      locate: locXY,
+      onChange: function (rows) {
+        S.points = rows.filter(function (r) { return locXY(r); }).map(function (r, i) {
+          var old = r._ref || {};
+          return { no: +r.no || i + 1, name: r.name || ('P' + (i + 1)), n: numOr(r.x, 0), e: numOr(r.y, 0), z: numOr(r.z, 0), kind: old.kind || 'raw', ref: old.ref || '' };
+        });
+        refreshPoints();
+      }
+    });
+  }
+  function ptRowsOf() { return S.points.map(function (p) { return { no: p.no, name: p.name, x: p.n, y: p.e, z: p.z || 0, _ref: { kind: p.kind, ref: p.ref } }; }); }
+  $('btnIpGrid').onclick = function (e) { e.preventDefault(); openIpEditor(); };
+  $('btnPtsGrid').onclick = openPointsEditor;
+
+  // ---------------- プロジェクト (名前を付けて保存 / 開く) ----------------
+  // 画面の状態 + 読み込んだ SIMA・図面ファイル本体を 1 つの .mdp (JSON) に保存する。タイルはフォルダの場所だけ記録。
+  var PROJ = { path: null, name: null, handle: null, dirty: false };
+  var UI_IDS = ['numPitch', 'numSub', 'numStart', 'selStaFmt', 'numLabelZoom', 'numLeft', 'numRight', 'chkKey', 'chkEdges', 'chkLabels', 'chkIpLine', 'numSnapPx', 'chkDxfSwap', 'selDxfScale'];
+  function updateTitle() {
+    var t = 'MapDetector ' + VERSION + ' — ' + (PROJ.name || '無題') + (PROJ.dirty ? ' *' : '');
+    if (document.title !== t) document.title = t;
+  }
+  function markDirty() {
+    if (S.restoring || PROJ.dirty) return;
+    PROJ.dirty = true; updateTitle();
+    if (N && N.setDirty) N.setDirty(true);
+  }
+  function setClean() {
+    PROJ.dirty = false; updateTitle();
+    if (N && N.setDirty) N.setDirty(false);
+  }
+  function abToB64(ab) {
+    var u = new Uint8Array(ab), out = '', CH = 0x8000;
+    for (var i = 0; i < u.length; i += CH) out += String.fromCharCode.apply(null, u.subarray(i, i + CH));
+    return btoa(out);
+  }
+  function b64ToAb(b64) { var bin = atob(b64), u = new Uint8Array(bin.length); for (var i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u.buffer; }
+  function uiValue(id) { var el = $(id); return el.type === 'checkbox' ? el.checked : el.value; }
+
+  function serializeProject() {
+    var c = map.getCenter();
+    var tileInfo = S.tile ? (S.tile.opened.info || S.tile.opened.det) : null;
+    var ui = {}; UI_IDS.forEach(function (id) { ui[id] = uiValue(id); });
+    return {
+      app: 'MapDetector', format: 1, version: VERSION, savedAt: new Date().toISOString(),
+      view: { center: [c.lat, c.lng], zoom: map.getZoom() },
+      zone: S.zone, base: $('selBase').value, panelHidden: $('panel').classList.contains('hidden'),
+      tile: S.tile ? { name: S.tile.name, path: S.tile.opened.kind === 'electron' ? tileInfo.root : null, tms: $('chkTms').checked, opacity: +$('rngTileOpacity').value } : null,
+      overlays: S.overlays.filter(function (o) { return o.src; }).map(function (o) {
+        var r = { kind: o.kind, label: o.name, visible: o.visible, snap: o.snap, color: o.color || null, file: { name: o.src.name, data: abToB64(o.src.data) } };
+        if (o.dxfOpts) r.dxfOpts = o.dxfOpts;
+        if (o.points && o.pointsEdited) r.points = o.points;   // 表で編集した座標点 (未編集なら埋め込みファイルから再生成)
+        if (o.kind === 'image') r.image = { corners: o.layer.getCorners().map(function (ll) { return [ll.lat, ll.lng]; }), opacity: o.layer.options.opacity, editable: o.layer._editable !== false };
+        return r;
+      }),
+      routes: { list: S.route.list.map(function (r) { var x = {}; Object.keys(r).forEach(function (k) { x[k] = r[k]; }); return x; }), cur: S.route.cur, ips: S.route.ips },
+      ui: ui,
+      snap: { on: S.snapOn, modes: S.snapModes },
+      points: S.points.map(function (p) { return { no: p.no, name: p.name, e: p.e, n: p.n, z: p.z || 0, kind: p.kind, ref: p.ref || '' }; })
+    };
+  }
+
+  function clearAll() {
+    closeDock();
+    S.restoring = true;
+    try {
+      S.overlays.slice().forEach(removeOverlay);
+      if (S.tile) { S.tile.layer.remove(); S.tile = null; $('tileInfo').textContent = '未読込 — フォルダをドラッグ&ドロップでも開けます'; }
+      S.route.list = []; S.route.cur = -1; S.route.ips = [];
+      renderRouteSelect(); renderIpTable(); rebuildRoute();
+      S.points = []; refreshPoints();
+      setPicking(false);
+    } finally { S.restoring = false; }
+  }
+
+  async function applyProject(pj) {
+    if (!pj || pj.app !== 'MapDetector') throw new Error('MapDetector のプロジェクトファイルではありません');
+    S.restoring = true;
+    var warn = [];
+    try {
+      clearAll(); S.restoring = true;
+      $('selZone').value = S.zone = pj.zone || 9;
+      setBase(pj.base || '');
+      $('panel').classList.toggle('hidden', !!pj.panelHidden);
+      Object.keys(pj.ui || {}).forEach(function (id) { var el = $(id); if (!el) return; if (el.type === 'checkbox') el.checked = !!pj.ui[id]; else el.value = pj.ui[id]; });
+      if (pj.snap) {
+        S.snapOn = pj.snap.on !== false; $('chkSnap').checked = S.snapOn;
+        Object.keys(pj.snap.modes || {}).forEach(function (k) { S.snapModes[k] = !!pj.snap.modes[k]; var cb = document.querySelector('[data-snap="' + k + '"]'); if (cb) cb.checked = S.snapModes[k]; });
+      }
+      // タイル (デスクトップ版のみ場所から再オープン)
+      if (pj.tile) {
+        $('rngTileOpacity').value = pj.tile.opacity != null ? pj.tile.opacity : 1;
+        var info = null;
+        if (pj.tile.path && N && N.openTilePath) { try { info = await N.openTilePath(pj.tile.path); } catch (e) { info = null; } }
+        if (info) {
+          info.tms = !!pj.tile.tms;
+          setTiles({ kind: 'electron', info: info }, info.root, { noFit: true });
+        } else warn.push('タイルフォルダ「' + (pj.tile.path || pj.tile.name) + '」を開けませんでした (タイルは別途開いてください)');
+      }
+      // 図面・SIMA (埋め込みファイルから再読込)
+      (pj.overlays || []).forEach(function (ov) {
+        var data = b64ToAb(ov.file.data);
+        if (ov.kind === 'sima') loadSima(ov.file.name, data, { restore: ov });
+        else loadDrawing(ov.file.name, data, { restore: ov });
+      });
+      renderLayerList();
+      // 路線
+      S.route.list = (pj.routes && pj.routes.list) || [];
+      renderRouteSelect();
+      if (pj.routes && pj.routes.cur >= 0 && S.route.list[pj.routes.cur]) {
+        S.route.cur = pj.routes.cur; $('selRoute').value = S.route.cur;
+        S.route.ips = (pj.routes.ips || []).map(function (p) { return { name: p.name || '', e: +p.e, n: +p.n, R: +p.R || 0, A1: +p.A1 || 0, A2: +p.A2 || 0 }; });
+      }
+      renderIpTable(); rebuildRoute();
+      // 取得点
+      S.points = (pj.points || []).map(function (p) { return { no: p.no, name: p.name, e: p.e, n: p.n, z: p.z || 0, kind: p.kind || 'raw', ref: p.ref || '' }; });
+      refreshPoints();
+      if (pj.view) map.setView(pj.view.center, pj.view.zoom, { animate: false });
+      map.invalidateSize();
+    } finally { S.restoring = false; }
+    return warn;
+  }
+
+  async function openProjectData(name, path, data) {
+    var pj = JSON.parse(new TextDecoder('utf-8').decode(data));
+    var warn = await applyProject(pj);
+    PROJ.path = path || null; PROJ.name = name; PROJ.handle = null;
+    setClean();
+    if (N && N.setSetting && path) N.setSetting('lastProject', path);
+    toast('プロジェクトを開きました: ' + name + (warn.length ? '\n' + warn.join('\n') : ''), warn.length ? 7000 : 3000);
+  }
+  async function confirmDiscard() {
+    return !PROJ.dirty || confirm('保存されていない変更があります。破棄してよろしいですか?');
+  }
+  async function openProject() {
+    if (!(await confirmDiscard())) return;
+    try {
+      if (N) { var f = await N.openFile('project'); if (f) await openProjectData(f.name, f.path, f.data); return; }
+      var r = await new Promise(function (resolve) {
+        var inp = $('inpProject');
+        inp.onchange = async function () { var file = inp.files[0]; inp.value = ''; resolve(file ? { name: file.name, data: await file.arrayBuffer() } : null); };
+        inp.click();
+      });
+      if (r) await openProjectData(r.name, null, r.data);
+    } catch (e) { toast('プロジェクトを開けません: ' + e.message, 6000); console.error(e); }
+  }
+  async function saveProject(asNew) {
+    try {
+      var json = JSON.stringify(serializeProject());
+      var defName = (PROJ.name || '無題') .replace(/\.mdp$/i, '') + '.mdp';
+      if (N) {
+        var path = (!asNew && PROJ.path) ? await N.writeFile({ path: PROJ.path, content: json, encoding: 'utf8' })
+          : await N.saveFile({ defaultName: defName, defaultPath: PROJ.path || undefined, content: json, encoding: 'utf8', bom: false, filters: [{ name: 'MapDetector プロジェクト', extensions: ['mdp'] }] });
+        if (!path) return false;
+        PROJ.path = path; PROJ.name = path.split(/[\\/]/).pop();
+        if (N.setSetting) N.setSetting('lastProject', path);
+      } else if (window.showSaveFilePicker) {
+        var h = (!asNew && PROJ.handle) || await window.showSaveFilePicker({ suggestedName: defName, types: [{ description: 'MapDetector プロジェクト', accept: { 'application/json': ['.mdp'] } }] });
+        var w = await h.createWritable(); await w.write(json); await w.close();
+        PROJ.handle = h; PROJ.name = h.name;
+      } else {
+        var a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([json], { type: 'application/json' })); a.download = defName; a.click();
+        setTimeout(function () { URL.revokeObjectURL(a.href); }, 5000);
+        PROJ.name = defName;
+      }
+      setClean();
+      toast('保存しました: ' + PROJ.name);
+      return true;
+    } catch (e) { if (e && e.name === 'AbortError') return false; toast('保存できません: ' + e.message, 6000); console.error(e); return false; }
+  }
+  async function newProject() {
+    if (!(await confirmDiscard())) return;
+    clearAll();
+    PROJ.path = null; PROJ.name = null; PROJ.handle = null;
+    if (N && N.setSetting) { N.setSetting('lastProject', undefined); N.setSetting('lastTileFolder', undefined); }
+    setClean();
+  }
+  window.addEventListener('beforeunload', function (e) { if (!N && PROJ.dirty) { e.preventDefault(); e.returnValue = ''; } });
+
   // ---------------- メニュー ----------------
   var ACTIONS = {
+    'file.new': newProject, 'file.openProject': openProject,
+    'file.save': function () { saveProject(false); }, 'file.saveAs': function () { saveProject(true); },
+    'file.saveThenClose': async function () { if (await saveProject(false) && N && N.closeWindow) N.closeWindow(); },
     'file.openTiles': openTiles, 'file.openDrawing': openDrawing, 'file.openSima': openSima,
     'file.exportCsv': exportCsv, 'file.exportSima': exportSima, 'file.exportStations': exportStations,
-    'edit.undoPoint': function () { if (isTyping()) { document.execCommand('undo'); return; } S.points.pop(); refreshPoints(); },
+    'edit.undoPoint': function () { if (DOCK.grid && DOCK.grid.hasFocus()) { DOCK.grid.undo(); return; } if (isTyping()) { document.execCommand('undo'); return; } S.points.pop(); refreshPoints(); },
     'edit.clearPoints': function () { $('btnClear').click(); },
     'edit.copyPoints': copyPoints,
     'view.fit': function () { fitTiles(false); }, 'view.fitAlignment': fitRoute,
@@ -651,7 +938,7 @@
     'tool.snapToggle': function () { S.snapOn = !S.snapOn; $('chkSnap').checked = S.snapOn; toast('スナップ ' + (S.snapOn ? 'ON' : 'OFF')); },
     'tool.alignmentFromPoints': routeFromPoints,
     'help.checkUpdate': function () { if (N) N.checkForUpdates(); else toast('自動更新はデスクトップ版 (インストーラ版) で利用できます'); },
-    'help.about': function () { $('aboutText').textContent = 'バージョン ' + VERSION + (N ? ' (デスクトップ版)' : ' (ブラウザ版)'); $('dlgAbout').showModal(); },
+    'help.about': function () { $('aboutVersion').textContent = 'バージョン ' + VERSION; $('aboutEdition').textContent = N ? 'デスクトップ版' : 'ブラウザ版'; $('dlgAbout').showModal(); },
     'app.quit': function () { window.close(); }
   };
   function runAction(id) { var f = ACTIONS[id]; if (f) f(); else console.warn('unknown menu id', id); }
@@ -706,7 +993,7 @@
     });
   } else buildHtmlMenu();
   $('stVersion').textContent = 'v' + VERSION;
-  document.title = 'MapDetector ' + VERSION;
+  updateTitle();
 
   // ---------------- ドラッグ&ドロップ ----------------
   document.addEventListener('dragover', function (e) { e.preventDefault(); document.body.classList.add('dropping'); });
@@ -728,15 +1015,18 @@
     for (var j = 0; j < files.length; j++) { var f = files[j]; loadDrawing(f.name, await f.arrayBuffer()); }
   });
 
-  // 起動時: 前回のタイルフォルダを開く (デスクトップ版)
+  // 起動時: 前回のプロジェクト (なければ前回のタイルフォルダ) を開く (デスクトップ版)
   (async function () {
     if (!N || !N.getSetting) return;
     try {
+      var lp = await N.getSetting('lastProject');
+      if (lp && N.readFile) { var f = await N.readFile(lp); if (f) { await openProjectData(f.name, f.path, f.data); return; } }
       var last = await N.getSetting('lastTileFolder');
       if (last) { var info = await N.openTilePath(last); if (info) setTiles({ kind: 'electron', info: info }, info.root); }
+      setClean();
     } catch (e) { /* 前回フォルダなし */ }
   })();
 
   // デバッグ/テスト用
-  window.MDApp = { S: S, map: map, loadDrawing: loadDrawing, loadSima: loadSima, addPoint: addPoint, setZone: setZone, setTiles: setTiles, computeSnap: computeSnap, rebuildRoute: rebuildRoute };
+  window.MDApp = { serializeProject: serializeProject, applyProject: applyProject, saveProject: saveProject, PROJ: PROJ, S: S, map: map, loadDrawing: loadDrawing, loadSima: loadSima, addPoint: addPoint, setZone: setZone, setTiles: setTiles, computeSnap: computeSnap, rebuildRoute: rebuildRoute };
 })();

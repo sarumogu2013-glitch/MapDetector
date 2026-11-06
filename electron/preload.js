@@ -28,15 +28,34 @@ contextBridge.exposeInMainWorld('mdNative', {
   openTileFolder: () => ipcRenderer.invoke('tiles:open'),
   openTilePath: (p) => ipcRenderer.invoke('tiles:openPath', p),
 
-  // kind: 'drawing' | 'sima' | 'any' → {path, name, data: ArrayBuffer} | null
+  // kind: 'drawing' | 'sima' | 'project' | 'any' → {path, name, data: ArrayBuffer} | null
   openFile: async (kind) => {
     const r = await ipcRenderer.invoke('file:open', kind);
     if (!r) return null;
     return { path: r.path, name: r.name, data: toArrayBuffer(r.data) };
   },
 
-  // opts: {defaultName, content: string|ArrayBuffer|Uint8Array, encoding: 'utf8'|'shift_jis', filters?, bom?} → path | null
+  // ダイアログなしで読み込み → {path, name, data: ArrayBuffer} | null (存在しない場合)
+  readFile: async (p) => {
+    const r = await ipcRenderer.invoke('file:read', p);
+    if (!r) return null;
+    return { path: r.path, name: r.name, data: toArrayBuffer(r.data) };
+  },
+
+  // opts: {defaultName?, defaultPath?, title?, content: string|ArrayBuffer|Uint8Array,
+  //        encoding: 'utf8'|'shift_jis', filters?, bom?} → path | null (キャンセル)
   saveFile: (opts) => ipcRenderer.invoke('file:save', opts),
+
+  // ダイアログなしで書き込み。opts: {path, content, encoding?, bom?} → path。失敗時は reject。
+  writeFile: (opts) => ipcRenderer.invoke('file:write', opts),
+
+  // 未保存変更の有無をメインへ通知 (ウィンドウを閉じる際の確認に使用)
+  setDirty: (dirty) => ipcRenderer.send('app:setDirty', !!dirty),
+  // 未保存確認を経由せずにウィンドウを閉じる (file.saveThenClose で保存完了後に呼ぶ)
+  closeWindow: () => ipcRenderer.send('app:close'),
+
+  // https:// のURLのみ既定ブラウザで開く → Promise<boolean>
+  openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
 
   checkForUpdates: () => ipcRenderer.invoke('update:check'),
 
