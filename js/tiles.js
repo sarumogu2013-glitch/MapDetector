@@ -124,6 +124,83 @@
     }
   });
 
+  // ---------- ピラミッド表示: 無いズームを補う ----------
+  // ・元より粗いズーム (最小ズーム未満・途中の抜け): 1 段細かいズームの 4 枚をメモリ上で合成・縮小して作る (再帰・キャッシュ)
+  // ・元より細かい抜け: 一番近い粗いズームの画像を拡大 (最大ズーム超は Leaflet の maxNativeZoom で拡大)
+  // ・データ範囲外は即座に空
+  var PyramidTileLayer = L.GridLayer.extend({
+    initialize: function (fetchUrl, info, tms, options) {
+      L.GridLayer.prototype.initialize.call(this, options);
+      this._fetch = fetchUrl; this._lv = info.levels.slice().sort(function (a, b) { return a - b; }); this._set = new Set(this._lv);
+      this._cache = new Map(); this._inflight = new Map();
+      var b = info.sampleBounds;
+      if (b) {   // データ範囲 (XYZ のタイル番号で、最小ズーム z0 基準)
+        var m = Math.pow(2, b.z) - 1;
+        this._bx = { z: b.z, x0: b.xmin, x1: b.xmax, y0: tms ? m - b.ymax : b.ymin, y1: tms ? m - b.ymin : b.ymax };
+      }
+      this._tms = !!tms;
+    },
+    _inData: function (z, x, y) {
+      var b = this._bx; if (!b) return true;
+      if (z >= b.z) { var s = z - b.z; return (x >> s) >= b.x0 && (x >> s) <= b.x1 && (y >> s) >= b.y0 && (y >> s) <= b.y1; }
+      var k = b.z - z; return (x << k) <= b.x1 && (((x + 1) << k) - 1) >= b.x0 && (y << k) <= b.y1 && (((y + 1) << k) - 1) >= b.y0;
+    },
+    _remember: function (key, v) {
+      this._cache.set(key, v);
+      if (this._cache.size > 700) this._cache.delete(this._cache.keys().next().value);   // 古いものから捨てる (約 700 枚)
+    },
+    _native: function (z, x, y) {
+      var self = this, fy = this._tms ? Math.pow(2, z) - 1 - y : y;
+      return Promise.resolve(this._fetch(z, x, fy)).then(function (u) {
+        if (!u) return null;
+        return new Promise(function (res) {
+          var img = new Image(); img.decoding = 'async';
+          img.onload = function () { if (u.revoke) u.revoke(); res(img); };
+          img.onerror = function () { if (u.revoke) u.revoke(); res(null); };
+          img.src = u.url || u;
+        });
+      });
+    },
+    /** (z, x, y) の画像 (Image または Canvas、無ければ null) */
+    _get: function (z, x, y) {
+      var key = z + '/' + x + '/' + y, self = this;
+      if (this._cache.has(key)) { var v = this._cache.get(key); this._cache.delete(key); this._cache.set(key, v); return Promise.resolve(v); }
+      if (this._inflight.has(key)) return this._inflight.get(key);
+      if (!this._inData(z, x, y)) return Promise.resolve(null);
+      var lv = this._lv, finer = null, coarser = null;
+      for (var i = 0; i < lv.length; i++) { if (lv[i] > z && finer == null) finer = lv[i]; if (lv[i] < z) coarser = lv[i]; }
+      var p;
+      if (this._set.has(z)) p = this._native(z, x, y);
+      else if (finer != null && (coarser == null || finer - z <= 3)) {
+        // 1 段細かいズームの 4 枚を合成して縮小 (その 4 枚も必要なら同じ方法で作る)
+        p = Promise.all([[0, 0], [1, 0], [0, 1], [1, 1]].map(function (d) { return self._get(z + 1, 2 * x + d[0], 2 * y + d[1]); })).then(function (ch) {
+          if (!ch.some(Boolean)) return null;
+          var cv = document.createElement('canvas'); cv.width = cv.height = 256;
+          var ctx = cv.getContext('2d'); ctx.imageSmoothingQuality = 'high';
+          ch.forEach(function (im, k) { if (im) ctx.drawImage(im, (k % 2) * 128, (k >> 1) * 128, 128, 128); });
+          return cv;
+        });
+      } else if (coarser != null) {
+        // 粗いズームの画像の一部を拡大
+        var d = z - coarser, n = Math.pow(2, d), px = x >> d, py = y >> d;
+        p = this._get(coarser, px, py).then(function (im) {
+          if (!im) return null;
+          var w = (im.naturalWidth || im.width) / n, cv = document.createElement('canvas'); cv.width = cv.height = 256;
+          cv.getContext('2d').drawImage(im, (x - px * n) * w, (y - py * n) * w, w, w, 0, 0, 256, 256);
+          return cv;
+        });
+      } else p = Promise.resolve(null);
+      p = p.then(function (v) { self._inflight.delete(key); if (v) self._remember(key, v); return v; }, function () { self._inflight.delete(key); return null; });
+      this._inflight.set(key, p);
+      return p;
+    },
+    createTile: function (coords, done) {
+      var cv = document.createElement('canvas'); cv.width = cv.height = 256;
+      this._get(coords.z, coords.x, coords.y).then(function (im) { if (im) cv.getContext('2d').drawImage(im, 0, 0, 256, 256); done(null, cv); }, function (e) { done(e, cv); });
+      return cv;
+    }
+  });
+
   var COMMON = { maxZoom: 32, keepBuffer: 4, updateWhenZooming: false, updateWhenIdle: false, className: 'md-local-tiles' };
 
   /**
@@ -139,6 +216,15 @@
     if (opened.kind === 'web') {
       // Web タイル (XYZ テンプレート URL)。crossOrigin で読み、タイル/GeoTIFF 生成時に画素を読めるようにする
       layer = L.tileLayer(info.url, L.extend(opts, { subdomains: info.subdomains || 'abc', crossOrigin: 'anonymous', errorTileUrl: TRANSPARENT, attribution: info.attribution || '', bounds: undefined }));
+    } else if (!(extra && extra.minNativeZoom != null)) {
+      // ローカルタイル: 無いズームを補うピラミッド表示 (最小ズーム未満は合成・縮小、最大ズーム超は拡大)
+      var fetchUrl;
+      if (opened.kind === 'electron') fetchUrl = function (z, x, y) { return 'mdtile://' + info.token + '/' + z + '/' + x + '/' + y; };
+      else {
+        var bsrc = opened.kind === 'handle' ? new HandleSource(info) : new FileListSource(info);
+        fetchUrl = function (z, x, y) { return bsrc.getBlob(z, x, y).then(function (blob) { if (!blob) return null; var u = URL.createObjectURL(blob); return { url: u, revoke: function () { URL.revokeObjectURL(u); } }; }); };
+      }
+      layer = new PyramidTileLayer(fetchUrl, info, tms, L.extend(opts, { minNativeZoom: undefined }));
     } else if (opened.kind === 'electron') {
       layer = L.tileLayer('mdtile://' + info.token + '/{z}/{x}/{y}', L.extend(opts, { errorTileUrl: TRANSPARENT, crossOrigin: false }));
     } else {
