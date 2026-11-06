@@ -47,6 +47,9 @@
       { id: 'view.togglePanel', label: 'サイドパネル表示切替', accel: 'CmdOrCtrl+B' },
       { id: 'view.toggleBase', label: '背景地図(地理院)表示切替' },
       { type: 'separator' },
+      { id: 'view.lowMotion', label: 'アニメーションを減らす (リモートデスクトップ向け) 切替' },
+      { id: 'app.gpu', label: 'GPU アクセラレーションを使う (再起動で反映)' },
+      { type: 'separator' },
       { id: 'view.reload', label: '再読み込み', accel: 'CmdOrCtrl+R' },
       { id: 'view.fullscreen', label: '全画面', accel: 'F11' },
       { id: 'view.devtools', label: '開発者ツール', accel: 'CmdOrCtrl+Shift+I' }

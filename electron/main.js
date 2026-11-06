@@ -50,6 +50,16 @@ function saveSettingsSoon() {
 }
 
 // ---------------------------------------------------------------------------
+// リモートデスクトップ (RDP) 対策: RDP 接続中は GPU が使えない/不安定で描画が乱れやすいので、
+// 既定 (auto) では GPU アクセラレーションを切って起動する。設定 gpu: 'auto' | 'on' | 'off'
+// ---------------------------------------------------------------------------
+const IS_REMOTE = process.platform === 'win32' && /^RDP-/i.test(process.env.SESSIONNAME || '');
+loadSettings();
+const GPU_MODE = settings.gpu || 'auto';
+const HW_ACCEL = !(GPU_MODE === 'off' || (GPU_MODE === 'auto' && IS_REMOTE));
+if (!HW_ACCEL) app.disableHardwareAcceleration();
+
+// ---------------------------------------------------------------------------
 // mdtile:// プロトコル
 // ---------------------------------------------------------------------------
 protocol.registerSchemesAsPrivileged([
@@ -346,6 +356,13 @@ function isSafeAccel(accel) {
   return /^F([1-9]|1\d|2[0-4])$/.test(accel);
 }
 
+async function toggleGpu(on) {
+  settings.gpu = on ? 'on' : 'off'; saveSettingsNow();
+  const r = await dialog.showMessageBox(mainWindow, { type: 'question', buttons: ['今すぐ再起動', '後で'], defaultId: 0, cancelId: 1,
+    message: 'GPU アクセラレーションを' + (on ? '使う' : '使わない') + '設定にしました', detail: '次回の起動から反映されます。今すぐ再起動しますか?' });
+  if (r.response === 0) { app.relaunch(); if (mainWindow) mainWindow.close(); }
+}
+
 function buildMenu() {
   require(path.join(ROOT_DIR, 'js', 'menu-def.js'));
   const def = (globalThis.MD && globalThis.MD.MenuDef) || [];
@@ -353,6 +370,9 @@ function buildMenu() {
     label: top.label,
     submenu: (top.items || []).map((it) => {
       if (it.type === 'separator') return { type: 'separator' };
+      if (it.id === 'app.gpu') {   // GPU アクセラレーション (再起動で反映)
+        return { label: it.label + (IS_REMOTE ? ' (リモート接続中)' : ''), type: 'checkbox', checked: HW_ACCEL, click: (mi) => toggleGpu(mi.checked) };
+      }
       const item = { label: it.label, click: () => handleMenu(it.id) };
       if (isSafeAccel(it.accel)) item.accelerator = it.accel;
       else if (it.accel) item.label = `${it.label}  (${it.accel === 'Escape' ? 'Esc' : it.accel})`;
@@ -614,6 +634,7 @@ function registerIpc() {
   });
 
   ipcMain.on('app:version', (e) => { e.returnValue = app.getVersion(); });
+  ipcMain.on('app:env', (e) => { e.returnValue = { isRemote: IS_REMOTE, hwAccel: HW_ACCEL, gpuMode: GPU_MODE }; });
 
   ipcMain.on('app:setDirty', (e, dirty) => {
     const win = senderWindow(e);

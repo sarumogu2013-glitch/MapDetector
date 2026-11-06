@@ -5,6 +5,14 @@
   var $ = function (id) { return document.getElementById(id); };
   if (N) document.body.classList.add('electron');
 
+  // ---- アニメーションを減らすモード (リモートデスクトップでは画面更新が間引かれ、動きがカクつく/乱れるため)
+  var LOWMO = { on: false };
+  function setLowMotion(on, silent) {
+    LOWMO.on = !!on; document.body.classList.toggle('md-lowmotion', LOWMO.on);
+    if (typeof map !== 'undefined' && map) { map._zoomAnimated = !LOWMO.on && L.DomUtil.TRANSITION !== undefined ? map.options.zoomAnimation : false; map._fadeAnimated = !LOWMO.on && map.options.fadeAnimation; map.options.inertia = !LOWMO.on; }
+    if (!silent) toast('アニメーションを減らすモード: ' + (LOWMO.on ? 'ON (リモートデスクトップ向け)' : 'OFF'));
+  }
+
   // ---- エラーの見える化: 画面に表示し、ヘルプ → エラーログをコピー で取り出せるように
   var ERRLOG = [], lastErrToast = 0;
   function reportError(e, where) {
@@ -51,6 +59,9 @@
   map.attributionControl.setPrefix('MapDetector ' + VERSION);
   L.control.scale({ imperial: false, maxWidth: 160 }).addTo(map);
   S.ptLayer = L.layerGroup().addTo(map);
+  // リモートデスクトップ接続中は既定でアニメーションを減らす (設定があればそちらを優先)
+  setLowMotion(!!(N && N.env && N.env.isRemote), true);
+  if (N && N.getSetting) N.getSetting('lowMotion').then(function (v) { if (v != null) setLowMotion(!!v, true); }).catch(function () {});
   // ツールバー (主要機能) — 起動処理の最初に作る (後続の初期化でエラーが出てもツールバーは残る)
   try { if (MD.Toolbar) {
     // 計測ツール (距離・面積・円) と DXF 出力をツールバーに追加
@@ -80,8 +91,9 @@
   (function () {
     var el = map.getContainer(), pane = map.getPane('mapPane'), mk = map.getPane('markerPane');
     var PX_PER_LEVEL = 250;   // ホイール 1 ノッチ (100px) ≒ 0.4 段
-    var TAU = 70;             // 追従の時定数 (ms) — 小さいほど機敏
-    var SETTLE = 280;         // 追従が終わってからズーム確定までの待ち (ms)
+    // 追従の時定数 (ms)・確定までの待ち (ms)。アニメーションを減らすモード (リモートデスクトップ向け) では即時反映
+    function TAU() { return LOWMO.on ? 0 : 70; }
+    function SETTLE() { return LOWMO.on ? 120 : 280; }
     var G = null, raf = 0, timer = 0, lastT = 0;
     // 見かけの変換: 画面座標 = t + s × (元の画面座標)。z = log2(s) を目標 zt へ追従させる
     function render() {
@@ -99,8 +111,8 @@
       raf = 0; if (!G) return;
       var dt = Math.min(50, t - (lastT || t)); lastT = t;
       var d = G.zt - G.z;
-      if (Math.abs(d) < 0.002) { setZ(G.zt); render(); clearTimeout(timer); timer = setTimeout(commit, SETTLE); return; }
-      setZ(G.z + d * (1 - Math.exp(-dt / TAU)));
+      if (Math.abs(d) < 0.002 || TAU() <= 0) { setZ(G.zt); render(); clearTimeout(timer); timer = setTimeout(commit, SETTLE()); return; }
+      setZ(G.z + d * (1 - Math.exp(-dt / TAU())));
       render();
       raf = requestAnimationFrame(frame);
     }
@@ -2119,8 +2131,11 @@
     'view.home': goHome, 'view.setHome': setHome, 'view.clearHome': clearHome,
     'view.north': function () { setBearing(0); },
     'edit.stations': function () { openStationEditor(); }, 'edit.ipGrid': function () { openIpEditor(); }, 'edit.pointsGrid': function () { openPointsEditor(); },
+    'view.lowMotion': function () { setLowMotion(!LOWMO.on); if (N && N.setSetting) N.setSetting('lowMotion', LOWMO.on); },
+    'app.gpu': function () { toast('GPU アクセラレーションの切り替えはデスクトップ版のメニューから行えます'); },
     'help.copyErrors': async function () {
-      var txt = 'MapDetector ' + VERSION + (N ? ' (デスクトップ版)' : ' (ブラウザ版)') + '\n' + navigator.userAgent + '\n\n' + (ERRLOG.length ? ERRLOG.join('\n\n') : 'エラーはありません');
+      var env = N && N.env ? '\nリモート接続: ' + (N.env.isRemote ? 'はい' : 'いいえ') + ' / GPU: ' + (N.env.hwAccel ? '使用' : '不使用') + ' (' + N.env.gpuMode + ')' : '';
+      var txt = 'MapDetector ' + VERSION + (N ? ' (デスクトップ版)' : ' (ブラウザ版)') + env + '\nアニメーション控えめ: ' + (LOWMO.on ? 'ON' : 'OFF') + '\n' + navigator.userAgent + '\n\n' + (ERRLOG.length ? ERRLOG.join('\n\n') : 'エラーはありません');
       try { await navigator.clipboard.writeText(txt); toast('エラーログをコピーしました (' + ERRLOG.length + ' 件)'); } catch (e) { alert(txt); }
     },
     'file.addWebTiles': function () { $('dlgWeb').showModal(); },
