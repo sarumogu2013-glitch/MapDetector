@@ -190,3 +190,10 @@ body.previewing .ps-sheet { box-shadow: 0 6px 24px rgba(0,0,0,.4); }
 
 /* アニメーションを減らすモード (リモートデスクトップ向け) */
 .md-lowmotion *, .md-lowmotion *::before, .md-lowmotion *::after { transition: none !important; animation: none !important; }
+
+/* レイヤー一覧のドラッグ並べ替え */
+.layers li .grip { cursor: grab; color: #94a3b8; padding: 0 2px; user-select: none; flex: none; }
+.layers li .grip.fixed { cursor: default; color: #cbd5e1; }
+.layers li.dragging { opacity: .45; }
+.layers li.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
+.layers li.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
