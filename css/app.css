@@ -197,3 +197,4 @@ body.previewing .ps-sheet { box-shadow: 0 6px 24px rgba(0,0,0,.4); }
 .layers li.dragging { opacity: .45; }
 .layers li.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
 .layers li.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
+.web-fav { display: flex; gap: 6px; flex-wrap: wrap; }

@@ -305,17 +305,57 @@
     return addTileLayer(opened, cfg.name || cfg.url, L.extend({ noFit: true }, opt || {}));
   }
   (function () {
-    var sel = $('webPreset');
-    WEB_PRESETS.forEach(function (p, i) { var o = document.createElement('option'); o.value = i; o.textContent = p.name; sel.appendChild(o); });
-    var cu = document.createElement('option'); cu.value = 'custom'; cu.textContent = '任意の URL…'; sel.appendChild(cu);
-    function fill() { var p = WEB_PRESETS[+sel.value]; if (!p) return; $('webName').value = p.name; $('webUrl').value = p.url; $('webMinZ').value = p.minZ; $('webMaxZ').value = p.maxZ; }
-    sel.onchange = fill; fill();
+    // 「種類」= お気に入り一覧 (編集可)。デスクトップ版は設定ファイル、ブラウザ版は localStorage に保存。初期値は WEB_PRESETS
+    var sel = $('webPreset'), WEB_LIST = WEB_PRESETS.map(function (p) { return L.extend({}, p); });
+    function saveList() {
+      if (N && N.setSetting) N.setSetting('webTileList', WEB_LIST);
+      else { try { localStorage.setItem('md.webTileList', JSON.stringify(WEB_LIST)); } catch (e) { /* 保存できない環境 */ } }
+    }
+    function renderSel(selectIdx) {
+      sel.innerHTML = '';
+      WEB_LIST.forEach(function (p, i) { var o = document.createElement('option'); o.value = i; o.textContent = p.name; sel.appendChild(o); });
+      var cu = document.createElement('option'); cu.value = 'custom'; cu.textContent = '任意の URL…'; sel.appendChild(cu);
+      sel.value = selectIdx != null && WEB_LIST[selectIdx] ? selectIdx : (WEB_LIST.length ? 0 : 'custom');
+      fill();
+    }
+    function fill() {
+      var p = WEB_LIST[+sel.value]; $('webDel').disabled = !p;
+      if (!p) return;
+      $('webName').value = p.name; $('webUrl').value = p.url; $('webMinZ').value = p.minZ; $('webMaxZ').value = p.maxZ; $('webTms').checked = !!p.tms;
+    }
+    sel.onchange = fill;
+    (async function () {
+      var v = null;
+      try { v = N && N.getSetting ? await N.getSetting('webTileList') : JSON.parse(localStorage.getItem('md.webTileList') || 'null'); } catch (e) { v = null; }
+      if (Array.isArray(v) && v.length) WEB_LIST = v;
+      renderSel(0);
+    })();
+    // 一覧に保存: 同じ名前があれば上書き、なければ追加
+    $('webSave').onclick = function (e) {
+      e.preventDefault();
+      var it = { name: $('webName').value.trim() || $('webUrl').value.trim(), url: $('webUrl').value.trim(), minZ: +$('webMinZ').value || 0, maxZ: +$('webMaxZ').value || 18, tms: $('webTms').checked };
+      if (!/^https?:\/\//.test(it.url) || it.url.indexOf('{z}') < 0) { toast('URL は https://…/{z}/{x}/{y}.png の形式で指定してください', 5000); return; }
+      var i = WEB_LIST.findIndex(function (p) { return p.name === it.name; });
+      if (i >= 0) { it.attribution = WEB_LIST[i].attribution; WEB_LIST[i] = it; } else { WEB_LIST.push(it); i = WEB_LIST.length - 1; }
+      saveList(); renderSel(i); toast('「' + it.name + '」を種類の一覧に保存しました');
+    };
+    $('webDel').onclick = function (e) {
+      e.preventDefault();
+      var i = +sel.value; if (!WEB_LIST[i] || !confirm('「' + WEB_LIST[i].name + '」を一覧から削除しますか?')) return;
+      WEB_LIST.splice(i, 1); saveList(); renderSel(Math.max(0, i - 1));
+    };
+    $('webUp').onclick = function (e) { e.preventDefault(); var i = +sel.value; if (!(i > 0)) return; var t = WEB_LIST[i - 1]; WEB_LIST[i - 1] = WEB_LIST[i]; WEB_LIST[i] = t; saveList(); renderSel(i - 1); };
+    $('webReset').onclick = function (e) {
+      e.preventDefault();
+      if (!confirm('種類の一覧を初期値に戻しますか? (保存したお気に入りは消えます)')) return;
+      WEB_LIST = WEB_PRESETS.map(function (p) { return L.extend({}, p); }); saveList(); renderSel(0);
+    };
     $('btnAddWeb').onclick = function () { $('dlgWeb').showModal(); };
     $('webAuto').onchange = function () { $('webMinZ').disabled = $('webMaxZ').disabled = this.checked; };
     $('webOk').onclick = async function (e) {
       e.preventDefault();
       try {
-        var p = WEB_PRESETS[+sel.value] || {}, url = $('webUrl').value.trim(), tms = $('webTms').checked;
+        var p = WEB_LIST[+sel.value] || {}, url = $('webUrl').value.trim(), tms = $('webTms').checked;
         var minZ = +$('webMinZ').value || 0, maxZ = +$('webMaxZ').value || 18;
         if (!/^https?:\/\//.test(url) || url.indexOf('{z}') < 0) throw new Error('URL は https://…/{z}/{x}/{y}.png の形式で指定してください');
         if ($('webAuto').checked) {
