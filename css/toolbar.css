@@ -1,0 +1,64 @@
+/* MD.Toolbar */
+.md-tb {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  gap: 0;
+  min-height: 44px;
+  padding: 2px 6px;
+  box-sizing: border-box;
+  background: #fbfbfc;
+  border-bottom: 1px solid #d9dde3;
+  font-family: "Segoe UI", "Yu Gothic UI", "Meiryo", system-ui, sans-serif;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.md-tb-group { display: flex; align-items: center; gap: 1px; flex: 0 0 auto; }
+.md-tb-sep {
+  flex: 0 0 auto;
+  width: 1px;
+  height: 28px;
+  margin: 0 6px;
+  background: #d9dde3;
+}
+.md-tb-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 44px;
+  height: 40px;
+  padding: 2px 5px;
+  margin: 0;
+  box-sizing: border-box;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: #374151;
+  font: inherit;
+  cursor: pointer;
+  line-height: 1;
+}
+.md-tb-icon { width: 18px; height: 18px; display: block; flex: 0 0 auto; }
+.md-tb-label { font-size: 10.5px; white-space: nowrap; letter-spacing: 0; }
+.md-tb-btn:hover:not(:disabled) { background: #eef2ff; }
+.md-tb-btn:active:not(:disabled) { background: #e0e7ff; }
+.md-tb-btn:focus { outline: none; }
+.md-tb-btn:focus-visible { outline: 2px solid #3b82f6; outline-offset: -1px; }
+.md-tb-btn[aria-pressed="true"] {
+  background: #dbeafe;
+  border-color: #bfdbfe;
+  color: #1d4ed8;
+}
+.md-tb-btn[aria-pressed="true"]:hover:not(:disabled) { background: #cfe1fd; }
+.md-tb-btn:disabled { color: #b4bac4; cursor: default; }
+.md-tb-btn:disabled .md-tb-icon { opacity: .6; }
+@media (max-width: 1000px) {
+  .md-tb-btn { min-width: 40px; padding: 2px 3px; }
+  .md-tb-sep { margin: 0 3px; }
+}

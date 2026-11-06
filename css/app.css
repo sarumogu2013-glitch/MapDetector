@@ -126,7 +126,9 @@ button.primary { background: var(--accent); color: #fff; border-color: var(--acc
 /* 印刷用シート (画面外で描画し、印刷時だけ表示) */
 #printStage { position: fixed; left: -20000px; top: 0; }
 #printStage[hidden] { display: block !important; visibility: hidden; }
-#printSheet { position: relative; background: #fff; overflow: hidden; }
+#printSheet { position: relative; }
+.ps-sheet { position: relative; background: #fff; overflow: hidden; break-after: page; page-break-after: always; }
+.ps-sheet:last-child { break-after: auto; page-break-after: auto; }
 .ps-inner { position: absolute; display: flex; flex-direction: column; border: 0.4mm solid #111; box-sizing: border-box; }
 .ps-mapbox { position: relative; overflow: hidden; flex: none; }
 .ps-map { position: absolute; left: 0; top: 0; background: #fff; }
@@ -145,7 +147,21 @@ button.primary { background: var(--accent); color: #fff; border-color: var(--acc
   html, body { height: auto; background: #fff; }
   body > *:not(#printStage) { display: none !important; }
   #printStage { position: static !important; left: 0 !important; visibility: visible !important; display: block !important; }
-  #printSheet { page-break-after: avoid; }
+  #printSheet { zoom: 1 !important; }
+  #previewBar { display: none !important; }
 }
 .ps-north-cap { font: 2.2mm sans-serif; color: #111; margin-top: -0.5mm; }
 .ps-raster { position: absolute; left: 0; top: 0; z-index: 0; pointer-events: none; }
+
+.pr-sub { width: 100%; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.pr-sub[hidden] { display: none; }
+.pr-adv summary { width: 100%; color: var(--muted); }
+.md-page-no { transform: translate(-50%, -50%); background: #ea580c; color: #fff; font: 700 13px sans-serif; padding: 1px 7px; border-radius: 10px; white-space: nowrap; }
+.ps-page { font-weight: 700; }
+/* 印刷プレビュー */
+#previewBar { display: none; }
+body.previewing #previewBar { display: flex; position: fixed; left: 0; right: 0; top: 0; height: 46px; z-index: 6001; align-items: center; gap: 12px; padding: 0 16px; background: #1f2937; color: #fff; }
+body.previewing #previewBar .spacer { flex: 1; }
+body.previewing #printStage { position: fixed !important; left: 0 !important; top: 46px; right: 0; bottom: 0; visibility: visible !important; overflow: auto; background: #6b7280; z-index: 6000; padding: 20px 0; }
+body.previewing #printSheet { display: flex; flex-direction: column; align-items: center; gap: 24px; width: max-content; min-width: 100%; }
+body.previewing .ps-sheet { box-shadow: 0 6px 24px rgba(0,0,0,.4); }

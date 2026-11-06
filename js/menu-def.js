@@ -18,6 +18,7 @@
       { id: 'file.exportSima', label: '取得座標をSIMA出力...' },
       { id: 'file.exportStations', label: '横断線(測点)座標をCSV出力...' },
       { type: 'separator' },
+      { id: 'file.printPreview', label: '印刷プレビュー...' },
       { id: 'file.print', label: '印刷 (範囲を指定)...', accel: 'CmdOrCtrl+P' },
       { type: 'separator' },
       { id: 'app.quit', label: '終了', accel: 'Alt+F4' }
@@ -25,9 +26,19 @@
     { label: '編集', items: [
       { id: 'edit.undoPoint', label: '最後の取得点を削除', accel: 'CmdOrCtrl+Z' },
       { id: 'edit.clearPoints', label: '取得点をすべて削除' },
+      { type: 'separator' },
+      { id: 'edit.stations', label: '測点 (横断線の位置) を表で編集' },
+      { id: 'edit.ipGrid', label: 'IP表を表で編集' },
+      { id: 'edit.pointsGrid', label: '取得点を表で編集' },
+      { type: 'separator' },
       { id: 'edit.copyPoints', label: '取得座標をクリップボードへコピー', accel: 'CmdOrCtrl+Shift+C' }
     ]},
     { label: '表示', items: [
+      { id: 'view.home', label: 'ホーム (表示範囲をリセット)', accel: 'Home' },
+      { id: 'view.setHome', label: '現在の表示をホームに設定' },
+      { id: 'view.clearHome', label: 'ホームをデータ全体に戻す' },
+      { id: 'view.north', label: '北を上にする' },
+      { type: 'separator' },
       { id: 'view.fit', label: 'タイル全体を表示', accel: 'CmdOrCtrl+0' },
       { id: 'view.fitAlignment', label: '線形全体を表示' },
       { id: 'view.togglePanel', label: 'サイドパネル表示切替', accel: 'CmdOrCtrl+B' },

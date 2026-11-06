@@ -8,9 +8,11 @@
 <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
 <link rel="stylesheet" href="css/app.css">
 <link rel="stylesheet" href="css/grid.css">
+<link rel="stylesheet" href="css/toolbar.css">
 </head>
 <body>
 <nav id="menubar" class="menubar" hidden></nav>
+<div id="toolbar"></div>
 <div id="main">
   <div id="map"></div>
   <aside id="panel">
@@ -131,25 +133,37 @@
     <select id="prOrient"><option value="land">横</option><option value="port">縦</option></select>
     <label>解像度 <select id="prDpi"><option>100</option><option selected>150</option><option>200</option><option>300</option></select> dpi</label>
     <label>余白 <input type="number" id="prMargin" value="10" min="0" max="40" style="width:3.5em"> mm</label></div>
-  <div class="pr-step"><b>2 範囲</b> 地図上のオレンジの枠をドラッグして配置 <button id="prCenter" type="button">画面中央へ</button></div>
-  <div class="pr-step"><b>3 表示レイヤー</b><div id="prLayers" class="pr-layers"></div>
-    <label class="pr-layer"><input type="checkbox" id="prTexts" checked> 図面の文字</label></div>
-  <div class="pr-step"><b>4 縮尺 / ズームレベル</b>
-    <label>縮尺 <select id="prScale">
-      <option value="map" selected>地図の縮尺 (ズームに合わせる)</option>
-      <option value="250">1:250</option><option value="500">1:500</option><option value="1000">1:1,000</option>
-      <option value="2500">1:2,500</option><option value="5000">1:5,000</option><option value="10000">1:10,000</option>
-      <option value="custom">任意...</option></select></label>
-    <label id="prScaleCustomWrap">1:<input type="number" id="prScaleCustom" value="2000" min="10" step="10" style="width:6em" hidden></label>
+  <div class="pr-step"><b>2 縮尺</b>
+    <label>縮尺 1:<input id="prScaleIn" list="prScaleList" placeholder="空欄=ズームに合わせる" style="width:10em" autocomplete="off"></label>
+    <datalist id="prScaleList"><option value="250"><option value="500"><option value="1000"><option value="2500"><option value="5000"><option value="10000"></datalist>
     <label>ズーム <select id="prZoom"></select></label></div>
+  <div class="pr-step"><b>3 範囲</b>
+    <label><input type="radio" name="prMode" id="prModeSingle" checked> 1枚</label>
+    <label><input type="radio" name="prMode" id="prModeBatch"> 複数枚 (範囲を分割してバッチ印刷)</label>
+    <div id="prSingleBox" class="pr-sub">地図上のオレンジの枠をドラッグして配置 <button id="prCenter" type="button">画面中央へ</button></div>
+    <div id="prBatchBox" class="pr-sub" hidden>
+      <button id="prSelArea" type="button">範囲を選択</button>
+      <label>起点 <select id="prStart"><option value="tl">左上から</option><option value="bl">左下から</option></select></label>
+      <div id="prBatchInfo" class="info"></div>
+    </div></div>
+  <div class="pr-step"><b>4 表示レイヤー</b><div id="prLayers" class="pr-layers"></div>
+    <label class="pr-layer"><input type="checkbox" id="prTexts" checked> 図面の文字</label></div>
   <div class="pr-step"><b>5 回転</b>
     <label><input type="radio" name="prRot" id="prRotKeep" checked> 表示角のまま</label>
     <label><input type="radio" name="prRot" id="prRotNorth"> 北上 (座標北)</label></div>
   <div class="pr-step"><b>6 仕上げ</b> <label><input type="checkbox" id="prDeco" checked> 方位図・縮尺バーを自動配置</label>
     <input type="text" id="prTitle" placeholder="タイトル (任意)"></div>
+  <details class="pr-step pr-adv"><summary>詳細オプション</summary>
+    <label>ラップ (用紙の重なり) <input type="number" id="prOvVal" value="0" min="0" step="any" style="width:6em"></label>
+    <select id="prOvUnit"><option value="m">距離 (m)</option><option value="px">ピクセル (印刷 px)</option><option value="%">率 (%)</option></select>
+    <div class="info">複数枚印刷で隣り合う用紙を重ねる量。率は用紙の幅・高さに対する割合。</div>
+  </details>
   <div id="prInfo" class="info"></div>
-  <div class="row pr-buttons"><button id="prGo" class="primary">印刷...</button><button id="prClose">閉じる</button></div>
+  <div class="row pr-buttons"><button id="prPreview">プレビュー</button><button id="prGo" class="primary">印刷...</button><button id="prClose">閉じる</button></div>
 </div>
+<div id="previewBar"><strong>印刷プレビュー</strong><span id="pvInfo"></span><span class="spacer"></span>
+  <label>表示 <select id="pvFit"><option value="page">ページ全体</option><option value="width">幅に合わせる</option><option value="100">100%</option></select></label>
+  <button id="pvPrint" class="primary">印刷...</button><button id="pvClose">閉じる</button></div>
 <div id="printStage" hidden><div id="printSheet"></div></div>
 <style id="printPageStyle"></style>
 <dialog id="dlgAbout" class="about">
@@ -182,6 +196,7 @@
 <script src="js/tiles.js"></script>
 <script src="js/imageoverlay.js"></script>
 <script src="js/grid.js"></script>
+<script src="js/toolbar.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>
