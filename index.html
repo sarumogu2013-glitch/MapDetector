@@ -210,9 +210,11 @@
   <label>種類 <select id="webPreset"></select></label>
   <label>名前 <input id="webName"></label>
   <label>URL <input id="webUrl" placeholder="https://…/{z}/{x}/{y}.png" style="width:30em"></label>
-  <div><label>ズーム <input type="number" id="webMinZ" min="0" max="24" style="width:4em"> 〜 <input type="number" id="webMaxZ" min="0" max="24" style="width:4em"></label>
+  <div><label><input type="checkbox" id="webAuto" checked> ズーム範囲を自動判定</label>
+  <label>ズーム <input type="number" id="webMinZ" min="0" max="24" style="width:4em" disabled> 〜 <input type="number" id="webMaxZ" min="0" max="24" style="width:4em" disabled></label>
   <label><input type="checkbox" id="webTms"> TMS (Y反転)</label></div>
   <div class="info">{z} {x} {y} ({-y}・{s} も可)。タイルの利用規約に従ってください。</div>
+  <div class="info" id="webStatus"></div>
   <div><button id="webOk" class="primary">追加</button> <button value="cancel">キャンセル</button></div>
 </form></dialog>
 <input type="file" id="inpProject" accept=".mdp,.json" hidden>
