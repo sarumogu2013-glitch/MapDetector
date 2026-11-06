@@ -1051,9 +1051,16 @@
     var sz = PAPERS[$('prPaper').value], land = $('prOrient').value === 'land';
     var W = land ? sz[0] : sz[1], H = land ? sz[1] : sz[0], m = +$('prMargin').value || 0, foot = 9;
     var dpi = +$('prDpi').value || 150, z = +$('prZoom').value;
+    // 縮尺指定: 用紙上 1px = 25.4/dpi mm → 地上 mpp = 縮尺分母 × 0.0254 / dpi。これを満たす (小数) ズームで描画
+    var scSel = $('prScale').value, fixed = null;
+    if (scSel === 'custom') fixed = +$('prScaleCustom').value || null; else if (scSel !== 'map') fixed = +scSel;
+    if (fixed) {
+      var lat = (PR.center || map.getCenter()).lat;
+      z = Math.log2(40075016.686 * Math.cos(lat * Math.PI / 180) / (256 * (fixed * 0.0254 / dpi)));
+    }
     var bearing = $('prRotNorth').checked ? 0 : getBearing();
     var mapW = W - 2 * m, mapH = H - 2 * m - foot;   // mm (地図部分)
-    return { paper: $('prPaper').value, W: W, H: H, m: m, foot: foot, dpi: dpi, z: z, bearing: bearing, mapW: mapW, mapH: mapH,
+    return { fixedScale: fixed, paper: $('prPaper').value, W: W, H: H, m: m, foot: foot, dpi: dpi, z: z, bearing: bearing, mapW: mapW, mapH: mapH,
       pxW: Math.round(mapW / 25.4 * dpi), pxH: Math.round(mapH / 25.4 * dpi) };
   }
   function prMpp(lat, z) { return 40075016.686 * Math.cos(lat * Math.PI / 180) / (256 * Math.pow(2, z)); }
@@ -1082,7 +1089,8 @@
       });
     } else PR.frame.setLatLngs(cs);
     var den = prScale(o, c.lat), gw = o.pxW * prMpp(c.lat, o.z), gh = o.pxH * prMpp(c.lat, o.z);
-    $('prInfo').textContent = '縮尺 約 1:' + Math.round(den).toLocaleString() + ' / 範囲 ' + gw.toFixed(0) + ' m × ' + gh.toFixed(0) + ' m / 回転 ' + o.bearing.toFixed(1) + '°' +
+    $('prZoom').disabled = !!o.fixedScale; $('prScaleCustom').hidden = $('prScale').value !== 'custom';
+    $('prInfo').textContent = (o.fixedScale ? '縮尺 1:' + Math.round(den).toLocaleString() + ' (ズーム ' + o.z.toFixed(2) + ')' : '縮尺 約 1:' + Math.round(den).toLocaleString()) + ' / 範囲 ' + gw.toFixed(0) + ' m × ' + gh.toFixed(0) + ' m / 回転 ' + o.bearing.toFixed(1) + '°' +
       ' / 画像 ' + o.pxW + '×' + o.pxH + ' px';
   }
   map.on('mousemove', function (e) {
@@ -1148,7 +1156,7 @@
     PR.open = false; $('printPanel').hidden = true;
     if (PR.frame) { PR.frame.remove(); PR.frame = null; }
   }
-  ['prPaper', 'prOrient', 'prDpi', 'prMargin', 'prZoom', 'prRotKeep', 'prRotNorth'].forEach(function (id) { $(id).addEventListener('change', function () {
+  ['prPaper', 'prOrient', 'prDpi', 'prMargin', 'prZoom', 'prRotKeep', 'prRotNorth', 'prScale', 'prScaleCustom'].forEach(function (id) { $(id).addEventListener('change', function () {
     prUpdate();
     // 枠がはみ出したら全体が見えるように表示を合わせる
     try { var fb = PR.frame.getBounds(); if (!map.getBounds().contains(fb)) map.fitBounds(fb, { padding: [40, 40], animate: false }); } catch (e) { /* empty */ }
