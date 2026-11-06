@@ -28,7 +28,7 @@
     { label: '表示', items: [
       { id: 'view.fit', label: 'タイル全体を表示', accel: 'CmdOrCtrl+0' },
       { id: 'view.fitAlignment', label: '線形全体を表示' },
-      { id: 'view.togglePanel', label: 'サイドパネル表示切替', accel: 'F2' },
+      { id: 'view.togglePanel', label: 'サイドパネル表示切替', accel: 'CmdOrCtrl+B' },
       { id: 'view.toggleBase', label: '背景地図(地理院)表示切替' },
       { type: 'separator' },
       { id: 'view.reload', label: '再読み込み', accel: 'CmdOrCtrl+R' },
