@@ -445,6 +445,13 @@
       x.label = (x.kind === 'key' ? x.label.split(' ')[0] + ' ' : '') + fmtCh(x.chainage);
     });
     var bones = MD.Alignment.fishbone(al, st, { left: +$('numLeft').value || 0, right: +$('numRight').value || 0 });
+    var srcRoute = S.route.list[S.route.cur];
+    if (srcRoute && srcRoute.customStations) {
+      // 表で編集した測点 (追加距離・測点ごとの幅員) で横断線を作る
+      var cs = stationGeom(al, srcRoute.customStations).filter(function (x) { return x.ok; });
+      st = cs.map(function (x) { return x.station; });
+      bones = cs.map(function (x) { return x.bone; });
+    }
     R.al = al; R.stations = st; R.bones = bones; R.pitch = pitch;
 
     var g = L.featureGroup(), shapes = [];
@@ -509,7 +516,8 @@
       });
       if (n) chk = '\n照合: SIMA の測点・幅杭 ' + n + '点 最大差 ' + (mx * 1000).toFixed(1) + ' mm' + (mx > 0.01 ? ' (' + worst + ') ⚠ 不一致' : ' ✓');
     }
-    $('alignInfo').textContent = '延長 ' + al.length.toFixed(3) + ' m / 測点 ' + st.length + ' / 主要点 ' + al.keyPoints.length + chk + (w.length ? '\n⚠ ' + w.join('\n⚠ ') : '');
+    if (DOCK.kind === 'stations' && !DOCK.updating && DOCK.grid) DOCK.grid.setRows(stationRows());
+    $('alignInfo').textContent = '延長 ' + al.length.toFixed(3) + ' m / 測点 ' + st.length + (srcRoute && srcRoute.customStations ? ' (表で編集中)' : '') + ' / 主要点 ' + al.keyPoints.length + chk + (w.length ? '\n⚠ ' + w.join('\n⚠ ') : '');
     refreshPoints();
   }
   // 測点ラベル (横断線方向に回転)。ズームに応じて間引き (主要点は常に表示)
@@ -750,6 +758,85 @@
     });
   }
   function ptRowsOf() { return S.points.map(function (p) { return { no: p.no, name: p.name, x: p.n, y: p.e, z: p.z || 0, _ref: { kind: p.kind, ref: p.ref } }; }); }
+  // ---- 測点 (横断線の位置) の表編集: 追加距離・幅員を入力 → 座標は自動計算
+  function defW(side) { return +$(side === 'l' ? 'numLeft' : 'numRight').value || 0; }
+  function blankOr(v) { if (v === '' || v == null) return null; var x = numOr(v, NaN); return isFinite(x) ? x : null; }
+  /** 測点行 [{name, ch, wl, wr, kind}] → 線形上の位置と横断線 */
+  function stationGeom(al, rows) {
+    var start = +$('numStart').value || 0;
+    return rows.map(function (r) {
+      var ch = blankOr(r.ch), res = { row: r, ok: false };
+      if (ch == null) return res;
+      var s = ch - start;
+      if (s < -0.005 || s > al.length + 0.005) { res.out = true; return res; }   // 丸め (小数3桁) の誤差は許容
+      s = Math.max(0, Math.min(al.length, s));
+      var q = MD.Alignment.pointAt(al, s), nx = -Math.sin(q.h), ny = Math.cos(q.h);
+      var wl = defW('l'), wr = defW('r');   // 幅員は全測点で一律
+      var station = { s: s, chainage: ch, label: r.name || staLabel(ch, S.route.pitch || 20), kind: r.kind || 'main' };
+      res.ok = true; res.station = station;
+      res.bone = { station: station, h: q.h, c: { e: q.e, n: q.n }, l: { e: q.e + nx * wl, n: q.n + ny * wl }, r: { e: q.e - nx * wr, n: q.n - ny * wr } };
+      return res;
+    });
+  }
+  function stationRows() {
+    var R = S.route, src = S.route.list[S.route.cur];
+    if (!R.al) return [];
+    var rows = src && src.customStations ? src.customStations : R.bones.map(function (b) {
+      return { name: b.station.label, ch: Math.round(b.station.chainage * 1000) / 1000, wl: '', wr: '', kind: b.station.kind };
+    });
+    return stationGeom(R.al, rows).map(function (g) {
+      var r = g.row, b = g.bone;
+      return { name: r.name, ch: r.ch, wl: r.wl == null ? '' : r.wl, wr: r.wr == null ? '' : r.wr, kind: r.kind || 'main',
+        cx: b ? b.c.n : '', cy: b ? b.c.e : '', lx: b ? b.l.n : '', ly: b ? b.l.e : '', rx: b ? b.r.n : '', ry: b ? b.r.e : '',
+        note: g.out ? '範囲外' : (r.ch === '' || r.ch == null ? '' : (b ? (r.kind === 'key' ? '主要点' : '') : '数値不正')) };
+    });
+  }
+  // 名前が自動の測点名 (No.k+x / 追加距離 / 「BC 69682.60」等) なら追加距離の変更に追従させる
+  function autoName(name, ch) {
+    var lab = staLabel(ch, S.route.pitch || 20);
+    if (!name) return lab;
+    if (/^(No\.\d+(\+[\d.]+)?|\d+(\.\d+)?)$/.test(name)) return lab;
+    var m = /^(\S+) (No\.\S+|\d+(\.\d+)?)$/.exec(name);
+    return m ? m[1] + ' ' + lab : name;
+  }
+  function openStationEditor() {
+    var src = S.route.list[S.route.cur];
+    if (!src || !S.route.al) { toast('先に線形 (SIMA または IP表) を用意してください'); return; }
+    var numCol = function (key, label, w, ro) { return { key: key, label: label, type: 'number', width: w, decimals: 3, readOnly: !!ro }; };
+    openDock({
+      kind: 'stations', title: '測点の編集 (追加距離 → 座標を自動計算・幅員は一律)',
+      columns: [{ key: 'name', label: '測点名', type: 'text', width: 140 }, numCol('ch', '追加距離', 110),
+        numCol('cx', '中心 X', 110, true), numCol('cy', '中心 Y', 110, true), numCol('lx', '左端 X', 110, true), numCol('ly', '左端 Y', 110, true),
+        numCol('rx', '右端 X', 110, true), numCol('ry', '右端 Y', 110, true), { key: 'note', label: '備考', type: 'text', width: 70, readOnly: true }],
+      rows: stationRows(),
+      newRow: function () { return { name: '', ch: '', wl: '', wr: '', kind: 'main' }; },
+      locate: function (r) { var g = r && S.route.al ? stationGeom(S.route.al, [r])[0] : null; return g && g.bone ? g.bone.c : null; },
+      onChange: function (rows) {
+        var prev = src.customStations || null;
+        src.customStations = rows.map(function (r, i) {
+          var ch = blankOr(r.ch), name = r.name || '';
+          var old = prev && prev[i];
+          if (ch != null && (!old || old.ch !== r.ch || !name)) name = autoName(name, ch);
+          return { name: name, ch: r.ch === '' || r.ch == null ? '' : (ch != null ? ch : r.ch), wl: r.wl === '' || r.wl == null ? '' : r.wl, wr: r.wr === '' || r.wr == null ? '' : r.wr, kind: r.kind || 'main' };
+        });
+        rebuildRoute();
+        DOCK.grid.updateRows(stationRows());
+      },
+      buttons: [
+        { label: '追加距離順に並べ替え', fn: function () {
+          if (!src.customStations) src.customStations = stationRows().map(function (r) { return { name: r.name, ch: r.ch, wl: r.wl, wr: r.wr, kind: r.kind }; });
+          src.customStations.sort(function (a, b) { var x = blankOr(a.ch), y = blankOr(b.ch); return (x == null ? 1e15 : x) - (y == null ? 1e15 : y); });
+          DOCK.updating = true; rebuildRoute(); DOCK.updating = false; DOCK.grid.setRows(stationRows());
+        } },
+        { label: '自動生成に戻す', fn: function () {
+          if (src.customStations && !confirm('表で編集した測点を破棄して、測点間隔からの自動生成に戻しますか?')) return;
+          src.customStations = null; DOCK.updating = true; rebuildRoute(); DOCK.updating = false; DOCK.grid.setRows(stationRows());
+        } },
+        { label: 'CSV出力', fn: exportStations }
+      ]
+    });
+  }
+  $('btnStaGrid').onclick = openStationEditor;
   $('btnIpGrid').onclick = function (e) { e.preventDefault(); openIpEditor(); };
   $('btnPtsGrid').onclick = openPointsEditor;
 

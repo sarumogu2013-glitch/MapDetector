@@ -275,6 +275,13 @@
     this._clampSel();
     this._render();
   };
+  // 計算列の更新など: 行データを差し替えるが、元に戻す履歴と選択は保持する (onChange は呼ばない)
+  P.updateRows = function (rows) {
+    if (this.editing) return;
+    this.rows = cloneRows(rows || []);
+    this._clampSel();
+    this._render();
+  };
   P.getRows = function () { return cloneRows(this.rows); };
   P.focus = function () { try { this.input.focus({ preventScroll: true }); } catch (e) { this.input.focus(); } };
   P.hasFocus = function () { return document.activeElement === this.input || !!(this.menuEl); };

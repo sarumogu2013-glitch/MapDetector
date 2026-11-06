@@ -56,6 +56,7 @@
       <h2>線形 (横断線)</h2>
       <div class="row"><label>路線 <select id="selRoute"></select></label>
         <button id="btnNewRoute" title="取得点から線形(IP)を作成">取得点→IP</button></div>
+      <div class="row"><button id="btnStaGrid" title="横断線の位置 (追加距離) を表で編集。座標は自動計算">測点を表で編集</button></div>
       <div class="grid2">
         <label>測点間隔(m) <input type="number" id="numPitch" value="20" min="1" step="1"></label>
         <label>中間点(m) <input type="number" id="numSub" value="0" min="0" step="1"></label>
@@ -104,7 +105,7 @@
 <section id="dock" hidden>
   <div class="dock-head">
     <strong id="dockTitle">表の編集</strong>
-    <span class="dock-hint">セル選択 → 入力 / Ctrl+C・Ctrl+V で Excel とコピペ / Delete で消去 / Ctrl+Z で元に戻す / 右クリックで行の挿入・削除</span>
+    <span class="dock-hint" title="セル選択 → 入力 / Ctrl+C・Ctrl+V で Excel とコピペ / Delete で消去 / Ctrl+Z で元に戻す / 右クリックで行の挿入・削除 / 最下段の * 行で行追加">Excel とコピペ可・右クリックで行操作 ⓘ</span>
     <span class="spacer"></span>
     <span id="dockButtons"></span>
     <button id="dockAddRow">行追加</button>
