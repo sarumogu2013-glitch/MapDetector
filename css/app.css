@@ -184,3 +184,6 @@ body.previewing .ps-sheet { box-shadow: 0 6px 24px rgba(0,0,0,.4); }
 /* ホイールズーム中は文字ラベル (マーカー) を一時的に隠す — 拡大表示で巨大化して見えるのを防ぐ */
 .leaflet-marker-pane { transition: opacity .15s ease; }
 .leaflet-marker-pane.md-zooming { opacity: 0; transition-duration: .08s; }
+.web-form { align-items: stretch !important; text-align: left; gap: 8px !important; }
+.web-form label { display: block; }
+.web-form input:not([type=checkbox]), .web-form select { font: inherit; }
