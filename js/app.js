@@ -344,8 +344,8 @@
     var vis = map.hasLayer(o.layer);
     o.layer.remove(); o.tms = tms;
     if (o.overview) o.overview.remove();
-    o.layer = MD.Tiles.createLayer(o.opened, tms); o.layer.setOpacity(o.opacity);
-    o.overview = o.opened.kind === 'web' ? null : makeOverview(o);
+    o.layer = MD.Tiles.createLayer(o.opened, tms); o.layer.setOpacity(o.opacity); o.layer.options.pane = o.pane;
+    o.overview = o.opened.kind === 'web' ? null : makeOverview(o); if (o.overview) o.overview.options.pane = o.pane;
     if (vis) o.layer.addTo(map);
     fitTiles(false, o); markDirty();
   }
@@ -452,9 +452,9 @@
     if (o.textLayer) o.textLayer.remove();
     if (o.kind === 'geojson') {
       o.shapes = geojsonToShapes(o.geo);
-      o.layer = L.geoJSON(o.geo, { style: { color: o.color, weight: 1.5 }, pointToLayer: function (f, ll) { return L.circleMarker(ll, { radius: 3, renderer: renderer }); }, interactive: false });
+      o.layer = L.geoJSON(o.geo, { style: { color: o.color, weight: 1.5, renderer: o.renderer }, pointToLayer: function (f, ll) { return L.circleMarker(ll, { radius: 3, renderer: o.renderer || renderer }); }, interactive: false });
     } else {
-      var r = shapesToLayers(o.shapes, o.color ? { color: o.color } : null);
+      var r = shapesToLayers(o.shapes, o.color ? { color: o.color } : null, o.renderer);
       o.layer = r.layer; o.textLayer = r.textLayer;
     }
     if (o.visible) o.layer.addTo(map);
@@ -462,12 +462,30 @@
     S.snap.setGroupEnabled && S.snap.setGroupEnabled(o.id, o.visible && o.snap);
     updateTextVisibility();
   }
+  // ---- レイヤーの重なり順: レイヤーごとに専用ペイン (回転用ペインの中) を作り、S.overlays の順 (下→上) に z-index を振る
+  function ensurePane(o) {
+    var nm = 'ov-' + o.id;
+    if (!map.getPane(nm)) map.createPane(nm, map._rotatePane || undefined);
+    o.pane = nm; return nm;
+  }
+  function applyZOrder() {
+    S.overlays.forEach(function (o, i) { var p = o.pane && map.getPane(o.pane); if (p) p.style.zIndex = String(210 + i); });
+  }
   function addOverlay(o, rs) {
     o.id = o.id || 'ov' + (S.nextId++); o.visible = true; o.snap = o.kind !== 'image' && o.kind !== 'tiles';
-    if (rs) { if (rs.label) o.name = rs.label; if (rs.visible != null) o.visible = rs.visible; if (rs.snap != null) o.snap = rs.snap; if (rs.color) o.color = rs.color; }
+    if (rs) { if (rs.label) o.name = rs.label; if (rs.visible != null) o.visible = rs.visible; if (rs.snap != null) o.snap = rs.snap; if (rs.color) o.color = rs.color; if (rs.z != null) o._z = rs.z; }
+    var pn = ensurePane(o);
+    if (o.layer && o.layer.options) o.layer.options.pane = pn;
+    if (o.overview) o.overview.options.pane = pn;
+    if (o.kind !== 'tiles' && o.kind !== 'image') o.renderer = L.canvas({ pane: pn, padding: 0.5, tolerance: 4 });
     if (o.kind === 'image') o.layer.on('change', markDirty);
     markDirty();
-    S.overlays.push(o);
+    // 既定の位置: タイルはタイル群の一番上 (図面などより下)、それ以外は一番上
+    if (o.kind === 'tiles') { var fi = S.overlays.findIndex(function (x) { return x.kind !== 'tiles'; }); if (fi < 0) S.overlays.push(o); else S.overlays.splice(fi, 0, o); }
+    else S.overlays.push(o);
+    // プロジェクト復元時は保存された順に並べ直す
+    if (S.overlays.some(function (x) { return x._z != null; })) S.overlays.sort(function (a, b) { return (a._z != null ? a._z : 1e9) - (b._z != null ? b._z : 1e9); });
+    applyZOrder();
     if (o.kind === 'image' || o.kind === 'tiles') { if (o.visible) o.layer.addTo(map); } else rebuildOverlay(o);
     renderLayerList();
   }
@@ -480,17 +498,40 @@
     renderLayerList(); markDirty();
   }
   /** レイヤー一覧: 取得点・計測 → 図面/SIMA/画像 (新しい順) → タイル (新しい順 = 上に重なる順) */
-  function layerOrder() {
-    var fixed = [S.ptOverlay, S.msOverlay].filter(Boolean);
-    var vec = S.overlays.filter(function (o) { return o.kind !== 'tiles'; }).reverse();
-    var til = tileLayers().slice().reverse();
-    return fixed.concat(vec, til);
+  function layerOrder() {   // 一覧は上に描かれるものから順に (取得点・計測は常に最上位)
+    return [S.ptOverlay, S.msOverlay].filter(Boolean).concat(S.overlays.slice().reverse());
+  }
+  // 一覧の行をドラッグして並べ替え → 重なり順に反映
+  var DRAG = { id: null };
+  function moveOverlay(dragId, targetId, after) {
+    var disp = S.overlays.slice().reverse(), from = disp.findIndex(function (o) { return o.id === dragId; });
+    if (from < 0 || dragId === targetId) return;
+    var item = disp.splice(from, 1)[0], to = disp.findIndex(function (o) { return o.id === targetId; });
+    if (to < 0) return;
+    disp.splice(after ? to + 1 : to, 0, item);
+    S.overlays = disp.reverse(); S.overlays.forEach(function (o) { delete o._z; });
+    applyZOrder(); markDirty(); renderLayerList();
   }
   var KIND_LABEL = { tiles: 'タイル', dxf: 'DXF', geojson: 'GeoJSON', image: '画像', sima: 'SIMA', points: '取得点', measure: '計測' };
   function renderLayerList() {
     var ul = $('layerList'); ul.innerHTML = '';
     layerOrder().forEach(function (o) {
       var li = document.createElement('li'); li.className = 'lk-' + o.kind;
+      if (!o.fixed) {
+        li.draggable = true; li.dataset.id = o.id;
+        li.addEventListener('dragstart', function (ev) { DRAG.id = o.id; li.classList.add('dragging'); ev.dataTransfer.effectAllowed = 'move'; try { ev.dataTransfer.setData('text/plain', o.id); } catch (e) { /* 空 */ } });
+        li.addEventListener('dragend', function () { DRAG.id = null; li.classList.remove('dragging'); document.querySelectorAll('#layerList li').forEach(function (x) { x.classList.remove('drop-before', 'drop-after'); }); });
+        li.addEventListener('dragover', function (ev) {
+          if (!DRAG.id || DRAG.id === o.id) return; ev.preventDefault(); ev.stopPropagation();
+          var r = li.getBoundingClientRect(), after = ev.clientY > r.top + r.height / 2;
+          li.classList.toggle('drop-after', after); li.classList.toggle('drop-before', !after);
+        });
+        li.addEventListener('dragleave', function () { li.classList.remove('drop-before', 'drop-after'); });
+        li.addEventListener('drop', function (ev) {
+          if (!DRAG.id) return; ev.preventDefault(); ev.stopPropagation();
+          var r = li.getBoundingClientRect(); moveOverlay(DRAG.id, o.id, ev.clientY > r.top + r.height / 2);
+        });
+      }
       var ctl = '';
       if (o.kind === 'tiles') ctl = '<input type="range" class="op" min="0" max="1" step="0.05" value="' + o.opacity + '" title="不透明度"><label title="TMS (Y反転)"><input type="checkbox" class="tms"' + (o.tms ? ' checked' : '') + '>TMS</label><button class="fit" title="全体表示">⤢</button>';
       else if (o.kind === 'image') ctl = '<input type="range" class="op" min="0" max="1" step="0.05" value="' + o.layer.options.opacity + '" title="不透明度"><label title="位置合わせハンドル"><input type="checkbox" class="ed" checked>調整</label>';
@@ -503,7 +544,7 @@
         if (!o.fixed) ctl += '<button class="fit" title="全体表示">⤢</button>';
       }
       var cnt = o.kind === 'points' ? ' (' + S.points.length + ')' : o.kind === 'measure' ? ' (' + S.measures.length + ')' : '';
-      li.innerHTML = '<input type="checkbox" class="vis" title="表示"' + (o.visible ? ' checked' : '') + '>' +
+      li.innerHTML = (o.fixed ? '<span class="grip fixed" title="常に最上位">•</span>' : '<span class="grip" title="ドラッグで重なり順を変更">⠿</span>') + '<input type="checkbox" class="vis" title="表示"' + (o.visible ? ' checked' : '') + '>' +
         '<span class="kind">' + (o.geotiff ? 'GeoTIFF' : o.web ? 'Web' : (KIND_LABEL[o.kind] || o.kind)) + '</span>' +
         '<span class="name" title="' + esc(o.name + (o.info ? '\n' + o.info : '')) + '">' + esc(o.name) + cnt + '</span>' + ctl +
         '<button class="x" title="' + (o.fixed ? 'すべて削除' : '削除') + '">×</button>';
@@ -1205,14 +1246,14 @@
       zone: S.zone, base: $('selBase').value, panelHidden: $('panel').classList.contains('hidden'),
       // タイルは重いのでフォルダの場所だけ (レイヤー順)
       tiles: tileLayers().map(function (o) {
-        var r = { label: o.name, path: o.path, tms: o.tms, opacity: o.opacity, visible: o.visible };
+        var r = { label: o.name, path: o.path, tms: o.tms, opacity: o.opacity, visible: o.visible, z: S.overlays.indexOf(o) };
         if (o.web) { var lv = o.web.levels; r.web = { url: o.web.url, minZ: lv[0], maxZ: lv[lv.length - 1], attribution: o.web.attribution }; }
         return r;
       }),
       pointsLayer: { visible: S.ptOverlay.visible, snap: S.ptOverlay.snap },
       measures: S.measures, measureLayer: { visible: S.msOverlay.visible, snap: S.msOverlay.snap },
       overlays: S.overlays.filter(function (o) { return o.src; }).map(function (o) {
-        var r = { kind: o.kind, label: o.name, visible: o.visible, snap: o.snap, color: o.color || null, file: { name: o.src.name, data: abToB64(o.src.data) } };
+        var r = { kind: o.kind, label: o.name, visible: o.visible, snap: o.snap, color: o.color || null, z: S.overlays.indexOf(o), file: { name: o.src.name, data: abToB64(o.src.data) } };
         if (o.dxfOpts) r.dxfOpts = o.dxfOpts;
         if (o.points && o.pointsEdited) r.points = o.points;   // 表で編集した座標点 (未編集なら埋め込みファイルから再生成)
         if (o.kind === 'image') r.image = { corners: o.layer.getCorners().map(function (ll) { return [ll.lat, ll.lng]; }), opacity: o.layer.options.opacity, editable: o.layer._editable !== false };
@@ -1495,17 +1536,17 @@
     toast('地図上でドラッグして印刷範囲を選択 (左上 → 右下など)', 5000);
   };
   map.on('mousedown', function (e) { if (!PR.selecting) return; if (e.originalEvent) e.originalEvent.preventDefault(); PR.selStart = toP(e.latlng); });
-  // 印刷パネルは見出しをドラッグして移動できる (地図の範囲選択の邪魔にならないように)
-  (function () {
-    var pnl = $('printPanel'), hd = pnl.querySelector('h3'), d = null;
-    hd.addEventListener('mousedown', function (ev) { var r = pnl.getBoundingClientRect(); d = { x: ev.clientX - r.left, y: ev.clientY - r.top }; ev.preventDefault(); });
+  // 印刷・書き出しパネルは見出しをドラッグして移動できる (地図の範囲選択の邪魔にならないように)
+  ['printPanel', 'exportPanel'].forEach(function (id) {
+    var pnl = $(id), hd = pnl.querySelector('h3'), d = null;
+    hd.addEventListener('mousedown', function (ev) { if (ev.button !== 0) return; var r = pnl.getBoundingClientRect(); d = { x: ev.clientX - r.left, y: ev.clientY - r.top }; ev.preventDefault(); });
     document.addEventListener('mousemove', function (ev) {
       if (!d) return;
       pnl.style.left = Math.max(0, Math.min(window.innerWidth - 80, ev.clientX - d.x)) + 'px';
       pnl.style.top = Math.max(0, Math.min(window.innerHeight - 40, ev.clientY - d.y)) + 'px'; pnl.style.right = 'auto';
     });
     document.addEventListener('mouseup', function () { d = null; });
-  })();
+  });
   map.on('mousemove', function (e) {
     if (!PR.selecting || !PR.selStart) return;
     var o = prOpt(), ax = prAxes(o), A = PR.selStart, C = toP(e.latlng);
@@ -1969,15 +2010,14 @@
   }
   function exLayerDefs() {
     var k = 1, defs = [];
-    tileLayers().forEach(function (o) { defs.push({ id: o.id, label: 'タイル: ' + o.name, on: o.visible, draw: function (ctx, P, W, H, box) { return drawTilesTo(ctx, P, W, H, o, box); } }); });
-    S.overlays.filter(function (o) { return o.kind === 'image'; }).forEach(function (o) {
-      defs.push({ id: o.id, label: '画像: ' + o.name, on: o.visible, draw: async function (ctx, P) {
+    // レイヤー一覧の重なり順 (下 → 上) どおりに描く
+    S.overlays.forEach(function (o) {
+      if (o.kind === 'tiles') defs.push({ id: o.id, label: 'タイル: ' + o.name, on: o.visible, draw: function (ctx, P, W, H, box) { return drawTilesTo(ctx, P, W, H, o, box); } });
+      else if (o.kind === 'image') defs.push({ id: o.id, label: (o.geotiff ? 'GeoTIFF: ' : '画像: ') + o.name, on: o.visible, draw: async function (ctx, P) {
         var img = await loadImg(o.url, false); if (!img) return; var c = o.layer.getCorners();
         affineDraw(ctx, img, P.llToPx(c[0]), P.llToPx(c[1]), P.llToPx(c[2]), o.layer.options.opacity);
       } });
-    });
-    S.overlays.filter(function (o) { return o.kind !== 'tiles' && o.kind !== 'image'; }).forEach(function (o) {
-      defs.push({ id: o.id, label: (KIND_LABEL[o.kind] || o.kind) + ': ' + o.name, on: o.visible, draw: function (ctx, P) { drawShapesTo(ctx, P, o.shapes || [], o.color, k); } });
+      else defs.push({ id: o.id, label: (KIND_LABEL[o.kind] || o.kind) + ': ' + o.name, on: o.visible, draw: function (ctx, P) { drawShapesTo(ctx, P, o.shapes || [], o.color, k); } });
     });
     if (S.route.draw) defs.push({ id: 'route', label: '線形 (中心線・幅員線・横断線・測点名)', on: true, draw: function (ctx, P) { drawRouteTo(ctx, P, k, $('chkLabels').checked); } });
     if (S.measures.length) defs.push({ id: 'measure', label: '計測 (' + S.measures.length + ')', on: S.msOverlay.visible, draw: function (ctx, P) {
