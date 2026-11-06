@@ -1050,32 +1050,58 @@
   function prOpt() {
     var sz = PAPERS[$('prPaper').value], land = $('prOrient').value === 'land';
     var W = land ? sz[0] : sz[1], H = land ? sz[1] : sz[0], m = +$('prMargin').value || 0, foot = 9;
-    var dpi = +$('prDpi').value || 150, z = +$('prZoom').value;
-    // 縮尺指定: 用紙上 1px = 25.4/dpi mm → 地上 mpp = 縮尺分母 × 0.0254 / dpi。これを満たす (小数) ズームで描画
+    var dpi = +$('prDpi').value || 150, zsel = +$('prZoom').value;
     var scSel = $('prScale').value, fixed = null;
     if (scSel === 'custom') fixed = +$('prScaleCustom').value || null; else if (scSel !== 'map') fixed = +scSel;
-    if (fixed) {
-      var lat = (PR.center || map.getCenter()).lat;
-      z = Math.log2(40075016.686 * Math.cos(lat * Math.PI / 180) / (256 * (fixed * 0.0254 / dpi)));
-    }
-    var bearing = $('prRotNorth').checked ? 0 : getBearing();
+    // 座標基準: 印刷地図は平面直角座標の投影で描く。pxPerM = 座標 1 m あたりの印刷ピクセル数
+    var g = prGrid(PR.center || map.getCenter());
+    var pxPerM = fixed ? dpi / (0.0254 * fixed) : g.d0 * Math.pow(2, zsel);   // 地図の縮尺: 選んだタイルズームと同じ細かさ
+    // 回転: 北上 = 座標北 (X軸) が真上。表示角のまま = メイン画面と同じ見え方 (子午線収差を補正)
+    var B = $('prRotNorth').checked ? 0 : -mainUpAzimuth(PR.center || map.getCenter());
     var mapW = W - 2 * m, mapH = H - 2 * m - foot;   // mm (地図部分)
-    return { fixedScale: fixed, paper: $('prPaper').value, W: W, H: H, m: m, foot: foot, dpi: dpi, z: z, bearing: bearing, mapW: mapW, mapH: mapH,
+    return { fixedScale: fixed, paper: $('prPaper').value, W: W, H: H, m: m, foot: foot, dpi: dpi, zsel: zsel, pxPerM: pxPerM, z: Math.log2(pxPerM),
+      scale: dpi / 0.0254 / pxPerM, bearing: B, d0: g.d0, mapW: mapW, mapH: mapH,
       pxW: Math.round(mapW / 25.4 * dpi), pxH: Math.round(mapH / 25.4 * dpi) };
   }
-  function prMpp(lat, z) { return 40075016.686 * Math.cos(lat * Math.PI / 180) / (256 * Math.pow(2, z)); }
-  function prScale(o, lat) { return prMpp(lat, o.z) * o.dpi / 0.0254; }
-  // 用紙枠 (印刷地図と同じ投影・回転で 4 隅を計算)
-  function prCorners(o, c) {
-    var cp = map.project(c, o.z), t = o.bearing * Math.PI / 180, out = [];
-    [[-1, -1], [1, -1], [1, 1], [-1, 1]].forEach(function (s) {
-      var x = s[0] * o.pxW / 2, y = s[1] * o.pxH / 2;
-      // 画面座標 (右, 下) → 世界ピクセル: 地図を bearing だけ時計回りに回した表示に合わせて逆回転
-      var wx = x * Math.cos(-t) - y * Math.sin(-t), wy = x * Math.sin(-t) + y * Math.cos(-t);
-      out.push(map.unproject(cp.add(L.point(wx, wy)), o.z));
-    });
-    return out;
+  /** メイン地図 (Web メルカトル) で、平面直角座標 1 m のズーム0 ピクセル長 (d0) と座標北の画面角 (回転0のとき, 時計回り度) */
+  function prGrid(c) {
+    var P = toP(c), pc = map.project(c, 0);
+    var pe = map.project(toLL({ e: P.e + 1, n: P.n }), 0), pn = map.project(toLL({ e: P.e, n: P.n + 1 }), 0);
+    var vN = pn.subtract(pc);
+    return { d0: (pe.distanceTo(pc) + pn.distanceTo(pc)) / 2, gridDeg: Math.atan2(vN.x, -vN.y) * 180 / Math.PI };
   }
+  /** メイン画面で、指定地点における画面上方向の座標方位角 (度) — 表示角のまま印刷する回転量 */
+  function mainUpAzimuth(c) {
+    var cp = map.latLngToContainerPoint(c), a = toP(map.containerPointToLatLng(cp.add([0, 50]))), b = toP(map.containerPointToLatLng(cp.subtract([0, 50])));
+    return Math.atan2(b.e - a.e, b.n - a.n) * 180 / Math.PI;
+  }
+  function prPlaneMpp(o) { return 1 / o.pxPerM; }
+  function prScale(o) { return o.scale; }
+  /** 平面直角座標を投影とする Leaflet CRS (1 m = 2^zoom px、y は北が上) */
+  function planeCRS() {
+    return L.extend({}, L.CRS, {
+      projection: {
+        project: function (ll) { var p = MD.JPRCS.toPlane(ll.lat, ll.lng, S.zone); return L.point(p.e, p.n); },
+        unproject: function (pt) { var r = MD.JPRCS.toLatLng(pt.x, pt.y, S.zone); return L.latLng(r.lat, r.lng); },
+        bounds: L.bounds([-1e7, -1e7], [1e7, 1e7])
+      },
+      transformation: L.transformation(1, 0, -1, 0),
+      scale: function (z) { return Math.pow(2, z); },
+      zoom: function (sc) { return Math.log(sc) / Math.LN2; },
+      distance: function (a, b) { return this.projection.project(a).distanceTo(this.projection.project(b)); },
+      infinite: true
+    });
+  }
+  /** 画面上方向の座標方位角 (度) = -bearing。用紙枠の 4 隅 (左上・右上・右下・左下) を平面直角座標で厳密に計算 */
+  function prCornersPlane(o, c) {
+    var P = toP(c), up = -o.bearing * Math.PI / 180, rt = up + Math.PI / 2;
+    var U = { e: Math.sin(up), n: Math.cos(up) }, R = { e: Math.sin(rt), n: Math.cos(rt) };
+    var hw = o.pxW / 2 / o.pxPerM, hh = o.pxH / 2 / o.pxPerM;
+    return [[-1, 1], [1, 1], [1, -1], [-1, -1]].map(function (s) {
+      return { e: P.e + R.e * hw * s[0] + U.e * hh * s[1], n: P.n + R.n * hw * s[0] + U.n * hh * s[1] };
+    });
+  }
+  function prCorners(o, c) { return prCornersPlane(o, c).map(toLL); }
   function prUpdate() {
     if (!PR.open) return;
     var o = prOpt(), c = PR.center || map.getCenter();
@@ -1088,9 +1114,9 @@
         PR.drag = { start: e.latlng, c0: PR.center };
       });
     } else PR.frame.setLatLngs(cs);
-    var den = prScale(o, c.lat), gw = o.pxW * prMpp(c.lat, o.z), gh = o.pxH * prMpp(c.lat, o.z);
+    var den = o.scale, gw = o.pxW / o.pxPerM, gh = o.pxH / o.pxPerM;
     $('prZoom').disabled = !!o.fixedScale; $('prScaleCustom').hidden = $('prScale').value !== 'custom';
-    $('prInfo').textContent = (o.fixedScale ? '縮尺 1:' + Math.round(den).toLocaleString() + ' (ズーム ' + o.z.toFixed(2) + ')' : '縮尺 約 1:' + Math.round(den).toLocaleString()) + ' / 範囲 ' + gw.toFixed(0) + ' m × ' + gh.toFixed(0) + ' m / 回転 ' + o.bearing.toFixed(1) + '°' +
+    $('prInfo').textContent = '縮尺 1:' + (o.fixedScale ? Math.round(den) : Math.round(den)).toLocaleString() + ' (座標基準)' + ' / 範囲 ' + gw.toFixed(0) + ' m × ' + gh.toFixed(0) + ' m / 回転 ' + o.bearing.toFixed(1) + '°' +
       ' / 画像 ' + o.pxW + '×' + o.pxH + ' px';
   }
   map.on('mousemove', function (e) {
@@ -1103,10 +1129,13 @@
 
   function prLayerDefs() {
     var defs = [];
-    if (S.tile) defs.push({ id: 'tile', label: 'タイル (' + S.tile.name + ')', on: true, build: function (pm) {
-      var lay = MD.Tiles.createLayer(S.tile.opened, $('chkTms').checked); lay.options.keepBuffer = 0; lay.setOpacity(+$('rngTileOpacity').value); return lay; } });
-    if (S.base) defs.push({ id: 'base', label: '背景地図 (' + $('selBase').selectedOptions[0].textContent + ')', on: true, build: function () {
-      var b = BASES[$('selBase').value]; return L.tileLayer(b[0], { maxNativeZoom: b[1], maxZoom: 24, keepBuffer: 0 }); } });
+    // ラスタ (タイル・背景) は印刷時に平面直角座標へワープして描く
+    if (S.base) defs.push({ id: 'base', label: '背景地図 (' + $('selBase').selectedOptions[0].textContent + ')', on: true, raster: function () {
+      var b = BASES[$('selBase').value];
+      return { minZ: 2, maxZ: b[1], opacity: 1, getUrl: function (z, x, y) { return Promise.resolve(b[0].replace('{z}', z).replace('{x}', x).replace('{y}', y)); }, release: function () {} }; } });
+    if (S.tile) defs.push({ id: 'tile', label: 'タイル (' + S.tile.name + ')', on: true, raster: function () {
+      var src = MD.Tiles.makeSource(S.tile.opened, $('chkTms').checked), lv = src.levels;
+      src.minZ = lv[0]; src.maxZ = lv[lv.length - 1]; src.opacity = +$('rngTileOpacity').value; return src; } });
     S.overlays.forEach(function (o) {
       defs.push({ id: o.id, label: o.name, on: o.visible, build: function (pm, rend, k, bearing) {
         if (o.kind === 'image') return new MD.AffineImage(o.url, o.layer.getCorners(), { opacity: o.layer.options.opacity, editable: false });
@@ -1166,6 +1195,45 @@
   $('prGo').onclick = function () { doPrint(); };
 
   function niceLen(x) { var p = Math.pow(10, Math.floor(Math.log10(x))), f = x / p; return (f >= 5 ? 5 : f >= 2.5 ? 2.5 : f >= 2 ? 2 : 1) * p; }
+  /**
+   * Web メルカトルのタイルを平面直角座標の印刷地図へ描く。タイル 1 枚ごとに 3 隅から一次変換を求めて drawImage
+   * (タイル範囲ではメルカトル→平面直角の変換はほぼ一次なので誤差は無視できる)。
+   */
+  async function warpRaster(pm, ctx, src, o, c) {
+    var zt = Math.round(Math.log2(o.pxPerM / o.d0));
+    zt = Math.max(src.minZ, Math.min(src.maxZ, zt));
+    var cs = prCorners(o, c), la = cs.map(function (q) { return q.lat; }), ln = cs.map(function (q) { return q.lng; });
+    function tx(lng, z) { return Math.floor((lng + 180) / 360 * Math.pow(2, z)); }
+    function ty(lat, z) { var r = lat * Math.PI / 180; return Math.floor((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * Math.pow(2, z)); }
+    var x0, x1, y0, y1;
+    for (;;) {
+      x0 = tx(Math.min.apply(null, ln), zt); x1 = tx(Math.max.apply(null, ln), zt);
+      y0 = ty(Math.max.apply(null, la), zt); y1 = ty(Math.min.apply(null, la), zt);
+      if ((x1 - x0 + 1) * (y1 - y0 + 1) <= 4000 || zt <= src.minZ) break;
+      zt--;   // 枚数が多すぎる場合は粗いズームで
+    }
+    var jobs = [];
+    for (var x = x0; x <= x1; x++) for (var y = y0; y <= y1; y++) jobs.push([x, y]);
+    ctx.save(); ctx.globalAlpha = src.opacity == null ? 1 : src.opacity; ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+    var T = MD.Tiles, done = 0;
+    async function one(j) {
+      var url = await src.getUrl(zt, j[0], j[1]);
+      if (!url) return;
+      var img = new Image(); img.crossOrigin = null; img.decoding = 'async';
+      var ok = await new Promise(function (res) { img.onload = function () { res(true); }; img.onerror = function () { res(false); }; img.src = url; });
+      if (!ok || !img.naturalWidth) return;
+      var p0 = pm.latLngToContainerPoint([T.tile2lat(j[1], zt), T.tile2lng(j[0], zt)]);
+      var p1 = pm.latLngToContainerPoint([T.tile2lat(j[1], zt), T.tile2lng(j[0] + 1, zt)]);
+      var p2 = pm.latLngToContainerPoint([T.tile2lat(j[1] + 1, zt), T.tile2lng(j[0], zt)]);
+      var w = img.naturalWidth, h = img.naturalHeight;
+      ctx.setTransform((p1.x - p0.x) / w, (p1.y - p0.y) / w, (p2.x - p0.x) / h, (p2.y - p0.y) / h, p0.x, p0.y);
+      ctx.drawImage(img, -0.3, -0.3, w + 0.6, h + 0.6);   // 継ぎ目が出ないよう僅かに重ねる
+    }
+    var q = jobs.slice(), workers = [];
+    for (var i = 0; i < 12; i++) workers.push((async function () { while (q.length) { await one(q.shift()); done++; } })());
+    await Promise.all(workers);
+    ctx.restore();
+  }
   async function doPrint() {
     var o = prOpt(), c = PR.center, k = o.dpi / 96;
     var sheet = $('printSheet'); sheet.innerHTML = '';
@@ -1184,28 +1252,43 @@
     var prend = L.canvas({ padding: 0.1 });
     var pm = L.map(mdiv, { zoomControl: false, attributionControl: false, zoomAnimation: false, fadeAnimation: false, markerZoomAnimation: false, inertia: false,
       dragging: false, scrollWheelZoom: false, doubleClickZoom: false, boxZoom: false, keyboard: false, touchZoom: false,
-      zoomSnap: 0, maxZoom: 24, minZoom: 0, preferCanvas: true, renderer: prend, rotate: true, bearing: o.bearing, rotateControl: false, shiftKeyRotate: false, touchRotate: false });
+      zoomSnap: 0, maxZoom: 30, minZoom: -10, preferCanvas: true, renderer: prend, crs: planeCRS(), rotate: true, bearing: o.bearing, rotateControl: false, shiftKeyRotate: false, touchRotate: false });
     pm.setView(c, o.z, { animate: false });
     if (pm.setBearing) pm.setBearing(o.bearing);
-    var mpp = prMpp(c.lat, o.z);
+    var mpp = prPlaneMpp(o, c);
     var waits = [];
+    // ラスタはキャンバスに描いて地図の最背面へ (背景 → タイルの順)
+    var cv = document.createElement('canvas'); cv.width = o.pxW; cv.height = o.pxH; cv.className = 'ps-raster';
+    mdiv.insertBefore(cv, mdiv.firstChild);
+    var ctx = cv.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, o.pxW, o.pxH);
+    for (var di = 0; di < PR.defs.length; di++) {
+      var dd = PR.defs[di];
+      if (dd.on && dd.raster) { var srcR = dd.raster(); try { await warpRaster(pm, ctx, srcR, o, c); } finally { srcR.release(); } }
+    }
     PR.defs.forEach(function (d) {
-      if (!d.on) return;
+      if (!d.on || d.raster) return;
       var lay = d.build(pm, prend, k, o.bearing, mpp);
       PR.lastMap = pm;
       if (!lay) return;
-      if (lay instanceof L.GridLayer) waits.push(new Promise(function (res) { lay.once('load', res); setTimeout(res, 45000); }));
+      if (lay instanceof L.GridLayer) waits.push(new Promise(function (res) {
+        // 範囲内にタイルが無いと load が来ないので、読み込みが始まらなければすぐ進む
+        var started = false;
+        lay.on('loading', function () { started = true; });
+        lay.once('load', res);
+        setTimeout(function () { if (!started || !Object.keys(lay._tiles || {}).length) res(); }, 800);
+        setTimeout(res, 45000);
+      }));
       lay.addTo(pm);
     });
     await Promise.all(waits);
     await new Promise(function (r) { setTimeout(r, 300); });
     // 方位図: 印刷地図上で北の向きを実測して回転
-    var p0 = pm.latLngToContainerPoint(c), p1 = pm.latLngToContainerPoint([c.lat + 0.001, c.lng]);
+    var Pc = toP(c), p0 = pm.latLngToContainerPoint(c), p1 = pm.latLngToContainerPoint(toLL({ e: Pc.e, n: Pc.n + 10 }));   // 座標北
     var northDeg = Math.atan2(p1.x - p0.x, -(p1.y - p0.y)) * 180 / Math.PI;
     var deco = '';
     if ($('prDeco').checked) {
-      deco += '<div class="ps-north"><svg viewBox="0 0 40 60" width="12mm" height="18mm"><g transform="rotate(' + northDeg.toFixed(2) + ' 20 26)"><polygon points="20,2 32,44 20,36 8,44" fill="#111"/><polygon points="20,2 8,44 20,36" fill="#fff" stroke="#111" stroke-width="1.2"/></g><text x="20" y="58" text-anchor="middle" font-size="13" font-family="sans-serif" font-weight="700">N</text></svg></div>';
-      var den = prScale(o, c.lat), target = 60 / 1000 * den, L1 = niceLen(target), mmLen = L1 / den * 1000;
+      deco += '<div class="ps-north"><svg viewBox="0 0 40 60" width="12mm" height="18mm"><g transform="rotate(' + northDeg.toFixed(2) + ' 20 26)"><polygon points="20,2 32,44 20,36 8,44" fill="#111"/><polygon points="20,2 8,44 20,36" fill="#fff" stroke="#111" stroke-width="1.2"/></g><text x="20" y="58" text-anchor="middle" font-size="13" font-family="sans-serif" font-weight="700">N</text></svg><div class="ps-north-cap">座標北</div></div>';
+      var den = prScale(o, c), target = 60 / 1000 * den, L1 = niceLen(target), mmLen = L1 / den * 1000;
       var segs = ''; for (var i = 0; i < 4; i++) segs += '<div class="ps-seg' + (i % 2 ? ' w' : '') + '" style="width:' + (mmLen / 4) + 'mm"></div>';
       var unit = function (v) { return v >= 1000 ? (v / 1000) + ' km' : v + ' m'; };
       deco += '<div class="ps-scale"><div class="ps-bar">' + segs + '</div><div class="ps-ticks" style="width:' + mmLen + 'mm"><span>0</span><span>' + unit(L1 / 2) + '</span><span>' + unit(L1) + '</span></div><div class="ps-den">縮尺 1:' + Math.round(den).toLocaleString() + '</div></div>';
@@ -1213,7 +1296,7 @@
     var decoDiv = document.createElement('div'); decoDiv.className = 'ps-deco'; decoDiv.innerHTML = deco; box.appendChild(decoDiv);
     var foot = document.createElement('div'); foot.className = 'ps-foot'; foot.style.height = o.foot + 'mm';
     var now = new Date();
-    foot.innerHTML = '<span class="ps-title">' + esc($('prTitle').value || PROJ.name || '') + '</span><span>' + 'JGD2011 平面直角座標 ' + ROMAN[S.zone] + '系' + '</span><span>縮尺 1:' + Math.round(prScale(o, c.lat)).toLocaleString() + ' (' + o.paper + ')</span><span>' + now.getFullYear() + '/' + (now.getMonth() + 1) + '/' + now.getDate() + '</span><span>MapDetector ' + VERSION + '</span>';
+    foot.innerHTML = '<span class="ps-title">' + esc($('prTitle').value || PROJ.name || '') + '</span><span>' + 'JGD2011 平面直角座標 ' + ROMAN[S.zone] + '系' + '</span><span>縮尺 1:' + Math.round(prScale(o, c)).toLocaleString() + ' (' + o.paper + '・座標基準)</span><span>' + now.getFullYear() + '/' + (now.getMonth() + 1) + '/' + now.getDate() + '</span><span>MapDetector ' + VERSION + '</span>';
     inner.appendChild(foot);
     $('toast').hidden = true;
     var cleanup = function () { window.removeEventListener('afterprint', cleanup); try { pm.remove(); } catch (e) { /* empty */ } sheet.innerHTML = ''; $('printStage').hidden = true; st.textContent = ''; };

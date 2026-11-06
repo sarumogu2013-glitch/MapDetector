@@ -142,7 +142,25 @@
     return new BlobTileLayer(src, opts);
   }
 
-  root.MD.Tiles = {
+  /**
+   * 開いたタイルから 1 枚ずつ画像 URL を取り出す (印刷時に平面直角座標へワープ描画するため)。
+   * getUrl(z, x, y) は XYZ の番号で受け、TMS なら内部で反転。戻り値 Promise<string|null>。release() で ObjectURL を解放。
+   */
+  function makeSource(opened, tms) {
+    var info = opened.info || opened.det, urls = [];
+    var flip = function (z, y) { return tms ? Math.pow(2, z) - 1 - y : y; };
+    if (opened.kind === 'electron') {
+      return { levels: info.levels, getUrl: function (z, x, y) { return Promise.resolve('mdtile://' + info.token + '/' + z + '/' + x + '/' + flip(z, y)); }, release: function () {} };
+    }
+    var src = opened.kind === 'handle' ? new HandleSource(info) : new FileListSource(info);
+    return {
+      levels: info.levels,
+      getUrl: function (z, x, y) { return src.getBlob(z, x, flip(z, y)).then(function (b) { if (!b) return null; var u = URL.createObjectURL(b); urls.push(u); return u; }); },
+      release: function () { urls.forEach(function (u) { URL.revokeObjectURL(u); }); urls = []; }
+    };
+  }
+
+  root.MD.Tiles = { makeSource: makeSource,
     detectFromHandle: detectFromHandle, detectFromFileList: detectFromFileList,
     createLayer: createLayer, boundsOf: boundsOf, tile2lat: tile2lat, tile2lng: tile2lng
   };
