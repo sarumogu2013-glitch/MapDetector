@@ -22,6 +22,7 @@ try { version = ipcRenderer.sendSync('app:version'); } catch (_) { /* ignore */ 
 contextBridge.exposeInMainWorld('mdNative', {
   isElectron: true,
   version,
+  env: (() => { try { return ipcRenderer.sendSync('app:env'); } catch (e) { return {}; } })(),
 
   // タイルフォルダ: {root, token, levels, ext, tms, sampleBounds, levelsInfo} | null
   // タイルURL: `mdtile://${token}/{z}/{x}/{y}`

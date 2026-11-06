@@ -187,3 +187,6 @@ body.previewing .ps-sheet { box-shadow: 0 6px 24px rgba(0,0,0,.4); }
 .web-form { align-items: stretch !important; text-align: left; gap: 8px !important; }
 .web-form label { display: block; }
 .web-form input:not([type=checkbox]), .web-form select { font: inherit; }
+
+/* アニメーションを減らすモード (リモートデスクトップ向け) */
+.md-lowmotion *, .md-lowmotion *::before, .md-lowmotion *::after { transition: none !important; animation: none !important; }
