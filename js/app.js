@@ -24,7 +24,7 @@
   var renderer = L.canvas({ padding: 0.5, tolerance: 4 });
   var map = L.map('map', {
     center: [35.681, 139.767], zoom: 12, maxZoom: 24, minZoom: 0,
-    zoomSnap: 0.25, zoomDelta: 0.5, wheelPxPerZoomLevel: 90, wheelDebounceTime: 20,
+    zoomSnap: 0, zoomDelta: 0.5, scrollWheelZoom: false,   // ホイールズームは下の自前処理 (即応・滑らか)
     preferCanvas: true, renderer: renderer, attributionControl: true, boxZoom: true,
     // 回転 (leaflet-rotate): 方位ボタンのドラッグ / Shift+ホイール / 右ドラッグ / 2本指
     rotate: true, bearing: 0, rotateControl: { closeOnZeroBearing: false, position: 'topleft' }, shiftKeyRotate: true, touchRotate: true
@@ -32,6 +32,31 @@
   map.attributionControl.setPrefix('MapDetector ' + VERSION);
   L.control.scale({ imperial: false, maxWidth: 160 }).addTo(map);
   S.ptLayer = L.layerGroup().addTo(map);
+
+  // ---- ホイールズーム: マウス位置を中心に、目標ズームへ毎フレーム近づける (Leaflet 標準の 250ms アニメ待ちをなくす)
+  (function () {
+    var el = map.getContainer(), target = null, anchor = null, raf = 0, last = 0;
+    var PX_PER_LEVEL = 150;   // ホイール 1 ノッチ (100px) ≒ 0.67 段
+    function step() {
+      raf = 0;
+      var z = map.getZoom(), d = target - z;
+      if (Math.abs(d) < 0.004) { if (d !== 0) map.setZoomAround(anchor, target, { animate: false }); target = null; return; }
+      map.setZoomAround(anchor, z + d * 0.38, { animate: false });
+      raf = requestAnimationFrame(step);
+    }
+    el.addEventListener('wheel', function (e) {
+      if (e.shiftKey) return;   // Shift+ホイールは回転 (leaflet-rotate)
+      if (e.target.closest && e.target.closest('.leaflet-control')) return;
+      e.preventDefault();
+      var dy = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1);
+      if (e.ctrlKey) dy *= 4;   // タッチパッドのピンチは差分が小さいので増幅
+      dy = Math.max(-300, Math.min(300, dy));
+      var base = target == null ? map.getZoom() : target;
+      target = Math.max(map.getMinZoom(), Math.min(map.getMaxZoom(), base - dy / PX_PER_LEVEL));
+      var r = el.getBoundingClientRect(); anchor = L.point(e.clientX - r.left, e.clientY - r.top);
+      if (!raf) raf = requestAnimationFrame(step);
+    }, { passive: false });
+  })();
 
   // ---- 回転: 右ボタン (または Ctrl+左ボタン) ドラッグで画面中心まわりに回転、ステータスバーで数値入力
   function getBearing() { return map.getBearing ? map.getBearing() : 0; }
@@ -625,9 +650,15 @@
   // 測点ラベル (横断線方向に回転)。ズームに応じて間引き (主要点は常に表示)
   function updateRouteLabels() {
     var R = S.route;
+    var show = R.bones.length && $('chkLabels').checked && map.getZoom() >= (+$('numLabelZoom').value || 0);
+    var mpp = show ? metersPerPixel(toLL(R.bones[0].c).lat) : 0;
+    // 間引き段階 (半ズーム刻み)・回転角・表示有無が変わったときだけ作り直す (ズーム中の負荷を減らす)
+    var key = show ? Math.round(Math.log2(mpp) * 2) + '|' + Math.round(getBearing() * 2) + '|' + R.bones.length : 'off';
+    if (R.labelLayer && R.labelKey === key && R.labelBones === R.bones) return;
     if (R.labelLayer) { R.labelLayer.remove(); R.labelLayer = null; }
-    if (!R.bones.length || !$('chkLabels').checked || map.getZoom() < (+$('numLabelZoom').value || 0)) return;
-    R.labelLayer = routeLabelLayer(metersPerPixel(toLL(R.bones[0].c).lat), getBearing()).addTo(map);
+    R.labelKey = key; R.labelBones = R.bones;
+    if (!show) return;
+    R.labelLayer = routeLabelLayer(mpp, getBearing()).addTo(map);
   }
   function fitRoute() { if (S.route.layer) map.fitBounds(S.route.layer.getBounds(), { padding: [30, 30], maxZoom: 19 }); }
 
