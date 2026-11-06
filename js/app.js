@@ -50,6 +50,7 @@
       pane.style.transformOrigin = (-pos.x) + 'px ' + (-pos.y) + 'px';   // = コンテナ左上
       pane.style.translate = G.tx + 'px ' + G.ty + 'px';
       pane.style.scale = String(Math.pow(2, G.z));
+      pane.style.willChange = 'transform, translate, scale';   // 操作中は GPU レイヤーとして固定 (途中の再ラスタ化による揺れを防ぐ)
     }
     function setZ(z) {   // アンカー (マウス位置) を固定したまま倍率を z に
       var k = Math.pow(2, z - G.z);
@@ -72,8 +73,12 @@
       var size = map.getSize(), s = Math.pow(2, g.z);
       var srcCenter = L.point((size.x / 2 - g.tx) / s, (size.y / 2 - g.ty) / s);
       var center = map.containerPointToLatLng(srcCenter), zoom = g.z0 + g.z;
-      pane.style.scale = ''; pane.style.translate = ''; pane.style.transformOrigin = '';
-      if (Math.abs(g.z) > 1e-6 || Math.abs(g.tx) > 0.5 || Math.abs(g.ty) > 0.5) map.setView(center, zoom, { animate: false });
+      pane.style.scale = ''; pane.style.translate = ''; pane.style.transformOrigin = ''; pane.style.willChange = '';
+      if (Math.abs(g.z) > 1e-6 || Math.abs(g.tx) > 0.5 || Math.abs(g.ty) > 0.5) {
+        map.setView(center, zoom, { animate: false });
+        // canvas は次フレームで描き直されるため、その 1 フレームだけ古い絵が新しい位置に出て「ズレ」て見える → その場で描き直す
+        redrawCanvasNow();
+      }
       requestAnimationFrame(function () { mk.classList.remove('md-zooming'); });   // 文字ラベルは確定後にふわっと戻す
     }
     map.scrollWheelZoom.disable();   // 標準ホイールズームは常に無効 (自前処理と二重にならないように)
@@ -99,6 +104,17 @@
     el.addEventListener('mousedown', commit, true);
     el.addEventListener('touchstart', commit, true);
     map._mdCommitWheel = commit;
+    function redrawCanvasNow() {
+      map.eachLayer(function (l) {
+        var r = l._renderer || (l instanceof L.Canvas ? l : null);
+        if (r && r instanceof L.Canvas && r._map && !r._mdDone) {
+          r._mdDone = true;
+          if (r._redrawRequest) { L.Util.cancelAnimFrame(r._redrawRequest); r._redrawRequest = null; }
+          r._redraw();
+        }
+      });
+      map.eachLayer(function (l) { var r = l._renderer; if (r) r._mdDone = false; });
+    }
   })();
 
   // ---- 回転: 右ボタン (または Ctrl+左ボタン) ドラッグで画面中心まわりに回転、ステータスバーで数値入力
@@ -135,7 +151,7 @@
     if (S.base) { S.base.remove(); S.base = null; }
     $('selBase').value = key || '';
     if (!key || !BASES[key]) return;
-    S.base = L.tileLayer(BASES[key][0], { maxNativeZoom: BASES[key][1], maxZoom: 32, zIndex: 0,
+    S.base = L.tileLayer(BASES[key][0], { maxNativeZoom: BASES[key][1], maxZoom: 32, zIndex: -1,
       attribution: '<a href="https://maps.gsi.go.jp/development/ichiran.html">地理院タイル</a>' }).addTo(map);
     S.base.bringToBack();
   }
@@ -194,7 +210,9 @@
     var o = { kind: 'tiles', name: rs.label || name, opened: opened, tms: rs.tms != null ? !!rs.tms : !!info.tms, opacity: rs.opacity != null ? rs.opacity : 1, path: opened.kind === 'electron' ? info.root : null };
     o.layer = MD.Tiles.createLayer(opened, o.tms);
     o.layer.setOpacity(o.opacity);
+    o.overview = makeOverview(o);
     addOverlay(o, opt.restore);
+    if (o.visible) o.overview.addTo(map);
     o.layer.setZIndex(1 + tileLayers().length);
     updateMaxZoom();
     var lv = info.levels;
@@ -203,6 +221,18 @@
     if (!opt.noFit) fitTiles(true, o);
     return o;
   }
+  /** 全体図: 最も低いズームのタイルだけを使う下敷き。縮小中や高解像度の読込中も何かが見えるように */
+  function makeOverview(o) {
+    var lv = tileInfoOf(o).levels;
+    var ov = MD.Tiles.createLayer(o.opened, o.tms, { minNativeZoom: lv[0], maxNativeZoom: lv[0], minZoom: 0, keepBuffer: 8, preloadTiles: 6, className: 'md-local-tiles md-overview' });
+    ov.setOpacity(o.opacity); ov.setZIndex(0);
+    return ov;
+  }
+  map.on('layeradd layerremove', function (e) {   // 本体の表示/非表示に全体図を連動
+    var o = tileLayers().find(function (x) { return x.layer === e.layer; });
+    if (!o || !o.overview) return;
+    if (e.type === 'layeradd') o.overview.addTo(map); else o.overview.remove();
+  });
   // 互換: 旧 API (起動時の再オープン等)
   function setTiles(opened, name, opt) { return addTileLayer(opened, name, opt); }
   function tileBounds(o) { return MD.Tiles.boundsOf(tileInfoOf(o), o.tms); }
@@ -216,7 +246,9 @@
   function setTileTms(o, tms) {
     var vis = map.hasLayer(o.layer);
     o.layer.remove(); o.tms = tms;
+    if (o.overview) o.overview.remove();
     o.layer = MD.Tiles.createLayer(o.opened, tms); o.layer.setOpacity(o.opacity);
+    o.overview = makeOverview(o);
     if (vis) o.layer.addTo(map);
     fitTiles(false, o); markDirty();
   }
@@ -385,7 +417,7 @@
         updateTextVisibility();
       };
       var sn = li.querySelector('.sn'); if (sn) sn.onchange = function () { o.snap = this.checked; markDirty(); S.snap.setGroupEnabled && S.snap.setGroupEnabled(o.id, o.visible && o.snap); };
-      var op = li.querySelector('.op'); if (op) op.oninput = function () { o.layer.setOpacity(+this.value); if (o.kind === 'tiles') o.opacity = +this.value; markDirty(); };
+      var op = li.querySelector('.op'); if (op) op.oninput = function () { o.layer.setOpacity(+this.value); if (o.kind === 'tiles') { o.opacity = +this.value; if (o.overview) o.overview.setOpacity(o.opacity); } markDirty(); };
       var tm = li.querySelector('.tms'); if (tm) tm.onchange = function () { setTileTms(o, this.checked); };
       var ed = li.querySelector('.ed'); if (ed) { ed.checked = o.layer._editable !== false; ed.onchange = function () { o.layer.setEditable(this.checked); markDirty(); }; }
       var fit = li.querySelector('.fit'); if (fit) fit.onclick = function () { try { map.fitBounds(o.kind === 'tiles' ? tileBounds(o) : o.layer.getBounds(), { maxZoom: 20 }); } catch (e) { /* empty */ } };

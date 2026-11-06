@@ -130,16 +130,28 @@
    * opened: {kind:'electron', info} | {kind:'handle', det} | {kind:'files', det}
    * 戻り値 L.Layer
    */
-  function createLayer(opened, tms) {
+  function createLayer(opened, tms, extra) {
     var info = opened.info || opened.det;
     var lv = info.levels;
     var opts = L.extend({}, COMMON, { minNativeZoom: lv[0], maxNativeZoom: lv[lv.length - 1], tms: !!tms,
-      minZoom: Math.max(0, lv[0] - 6), bounds: boundsOf(info, tms) || undefined });
+      minZoom: Math.max(0, lv[0] - 6), bounds: boundsOf(info, tms) || undefined }, extra || {});
+    var layer;
     if (opened.kind === 'electron') {
-      return L.tileLayer('mdtile://' + info.token + '/{z}/{x}/{y}', L.extend(opts, { errorTileUrl: TRANSPARENT, crossOrigin: false }));
+      layer = L.tileLayer('mdtile://' + info.token + '/{z}/{x}/{y}', L.extend(opts, { errorTileUrl: TRANSPARENT, crossOrigin: false }));
+    } else {
+      var src = opened.kind === 'handle' ? new HandleSource(info) : new FileListSource(info);
+      layer = new BlobTileLayer(src, opts);
     }
-    var src = opened.kind === 'handle' ? new HandleSource(info) : new FileListSource(info);
-    return new BlobTileLayer(src, opts);
+    if (opts.preloadTiles) {
+      // 全体図用: 表示範囲の周囲 N タイル分まで先読み (縮小した瞬間にも何か見えるように)。データ範囲外は読まない
+      var n = opts.preloadTiles;
+      layer._getTiledPixelBounds = function (center) {
+        var b = L.GridLayer.prototype._getTiledPixelBounds.call(this, center);
+        var px = this.getTileSize().x * this._map.getZoomScale(this._map.getZoom(), this._tileZoom) * n;
+        return new L.Bounds(b.min.subtract([px, px]), b.max.add([px, px]));
+      };
+    }
+    return layer;
   }
 
   /**
