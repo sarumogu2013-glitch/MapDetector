@@ -1,3 +1,13 @@
+<h1 align="center">🤖 このソフトウェアは AI が書きました 🤖</h1>
+
+<p align="center"><b>MapDetector のソースコード・テスト・ドキュメント・ビルド設定は、すべて AI (Anthropic の Claude / Claude Code) によって書かれています。</b><br>
+人間は要望を出して動作を確認しただけで、コードは一行も手書きしていません。</p>
+
+> [!WARNING]
+> **AI が生成したコードです。** 測量・設計などの業務に使う前に、出力 (座標、縮尺、線形計算、DXF、SIMA) を必ず人間が検証してください。
+
+---
+
 # MapDetector
 
 ローカルの地図タイル (z/x/y.png) をスムーズに表示し、クリックで座標を取得するデスクトップアプリ (Windows / Electron)。
