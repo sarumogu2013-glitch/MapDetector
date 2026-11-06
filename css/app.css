@@ -99,6 +99,9 @@ dialog.about button { margin-top: 12px; min-width: 96px; }
 #dock[hidden] { display: none; }
 .dock-head { display: flex; align-items: center; gap: 8px; padding: 4px 10px; border-bottom: 1px solid var(--line); background: #f8fafc; }
 .dock-head .spacer { flex: 1; }
-.dock-hint { color: var(--muted); font-size: 11px; }
+.dock-hint { color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; cursor: help; }
+.dock-head strong { white-space: nowrap; }
+.dock-head button { white-space: nowrap; }
+#dockButtons { display: flex; gap: 6px; }
 #dockGrid { flex: 1; min-height: 0; overflow: hidden; }
 .md-hl { width: 22px; height: 22px; margin: -11px 0 0 -11px; border: 3px solid #f59e0b; border-radius: 50%; box-shadow: 0 0 0 3px rgba(245,158,11,.35); pointer-events: none; }
