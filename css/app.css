@@ -1,0 +1,80 @@
+:root {
+  --bg: #f5f6f8; --panel: #ffffff; --fg: #1d2330; --muted: #6b7280; --line: #d9dde3;
+  --accent: #2563eb; --accent-fg: #fff; --hover: #eef2ff;
+  --font: "Segoe UI", "Yu Gothic UI", "Meiryo", system-ui, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { display: flex; flex-direction: column; font: 13px/1.4 var(--font); color: var(--fg); background: var(--bg); }
+
+/* メニューバー (ブラウザ版) */
+.menubar { display: flex; gap: 0; background: #fbfbfc; border-bottom: 1px solid var(--line); user-select: none; }
+.menubar[hidden] { display: none; }
+.menubar .m { position: relative; }
+.menubar .m > button { background: none; border: 0; padding: 5px 10px; font: inherit; cursor: default; }
+.menubar .m > button:hover, .menubar .m.open > button { background: var(--hover); }
+.menubar .dd { display: none; position: absolute; top: 100%; left: 0; min-width: 260px; background: #fff; border: 1px solid var(--line);
+  box-shadow: 0 6px 20px rgba(0,0,0,.12); z-index: 3000; padding: 4px 0; }
+.menubar .m.open .dd { display: block; }
+.menubar .dd button { display: flex; justify-content: space-between; width: 100%; border: 0; background: none; padding: 5px 14px; font: inherit; text-align: left; }
+.menubar .dd button:hover { background: var(--hover); }
+.menubar .dd .acc { color: var(--muted); margin-left: 24px; }
+.menubar .dd hr { border: 0; border-top: 1px solid var(--line); margin: 4px 0; }
+
+#main { flex: 1; display: flex; min-height: 0; }
+#map { flex: 1; background: #e9ecef; }
+#map.picking { cursor: crosshair; }
+#map.picking .leaflet-interactive { cursor: crosshair; }
+#panel { width: 380px; overflow: auto; background: var(--panel); border-left: 1px solid var(--line); }
+#panel.hidden { display: none; }
+#panel section { padding: 8px 10px 10px; border-bottom: 1px solid var(--line); }
+#panel h2 { font-size: 12px; margin: 0 0 6px; color: var(--muted); letter-spacing: .05em; }
+.row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 4px 0; }
+.small { font-size: 12px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 8px; margin: 4px 0; }
+.grid2 label { display: flex; flex-direction: column; font-size: 11px; color: var(--muted); }
+.grid2 input, .grid2 select { font: inherit; font-size: 13px; color: var(--fg); }
+button { font: inherit; padding: 3px 9px; border: 1px solid var(--line); background: #fff; border-radius: 4px; cursor: pointer; }
+button:hover { background: var(--hover); }
+button.toggle.on { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+input[type=number] { width: 100%; }
+.info { color: var(--muted); font-size: 12px; white-space: pre-wrap; }
+.layers { list-style: none; padding: 0; margin: 4px 0; }
+.layers li { display: flex; gap: 6px; align-items: center; padding: 3px 0; border-top: 1px dashed var(--line); }
+.layers li .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.layers li input[type=range] { width: 70px; }
+.layers li .x { padding: 0 6px; }
+.tblwrap { max-height: 300px; overflow: auto; }
+.tbl { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+.tbl th, .tbl td { border-bottom: 1px solid var(--line); padding: 2px 3px; text-align: right; }
+.tbl th { position: sticky; top: 0; background: #f3f4f6; text-align: center; }
+.tbl td:nth-child(2) { text-align: left; }
+.tbl input { width: 100%; font: inherit; border: 1px solid transparent; background: transparent; text-align: right; }
+.tbl input:focus { border-color: var(--accent); background: #fff; }
+.tbl td.name input { text-align: left; }
+.tbl tr.sel { background: #fff7d6; }
+details summary { cursor: pointer; color: var(--muted); margin: 4px 0; }
+
+#status { display: flex; gap: 16px; padding: 3px 10px; background: #1f2937; color: #e5e7eb; font-size: 12px; font-variant-numeric: tabular-nums; }
+#status .spacer { flex: 1; }
+#toast { position: fixed; bottom: 34px; left: 50%; transform: translateX(-50%); background: #111827; color: #fff; padding: 7px 14px; border-radius: 6px; z-index: 5000; max-width: 70vw; }
+
+/* 地図上 */
+.md-handle { background: #fff; border: 2px solid #e11d48; border-radius: 50%; }
+.md-handle-move { border-color: #2563eb; border-radius: 3px; text-align: center; line-height: 14px; font-size: 13px; color: #2563eb; }
+.md-snap { width: 16px; height: 16px; margin: -8px 0 0 -8px; border: 2px solid #f59e0b; pointer-events: none; }
+.md-snap.end, .md-snap.node { border-radius: 0; }
+.md-snap.mid { transform: rotate(45deg); }
+.md-snap.inter { border-color: #ef4444; border-radius: 0; background: linear-gradient(45deg, transparent 45%, #ef4444 45%, #ef4444 55%, transparent 55%), linear-gradient(-45deg, transparent 45%, #ef4444 45%, #ef4444 55%, transparent 55%); }
+.md-snap.center { border-radius: 50%; border-color: #10b981; }
+.md-snap.near { border-radius: 50%; width: 12px; height: 12px; margin: -6px 0 0 -6px; border-color: #a855f7; }
+.md-snap.raw { border: 1px solid #64748b; border-radius: 50%; width: 8px; height: 8px; margin: -4px 0 0 -4px; }
+.md-snap-label { position: absolute; left: 12px; top: -22px; white-space: nowrap; background: rgba(17,24,39,.85); color: #fff; padding: 1px 5px; border-radius: 3px; font-size: 11px; }
+.md-pt { background: #dc2626; color: #fff; border-radius: 9px; font-size: 10px; line-height: 16px; text-align: center; min-width: 16px; padding: 0 3px; border: 1px solid #fff; transform: translate(6px, -18px); white-space: nowrap; }
+.md-sta-rot { position: absolute; width: 0; height: 0; transform-origin: 0 0; }
+.md-sta-label { position: absolute; top: -0.7em; left: 4px; color: #065f46; font-size: 11px; font-weight: 600; white-space: nowrap; text-shadow: 0 0 2px #fff, 0 0 2px #fff, 0 0 3px #fff; pointer-events: none; }
+.md-key-label { color: #b91c1c; }
+.md-text { color: #111; white-space: nowrap; text-shadow: 0 0 2px #fff; pointer-events: none; font-size: 11px; }
+.dropping #map { outline: 4px dashed var(--accent); outline-offset: -4px; }
+.electron .browser-only { display: none; }
+.md-sta-label.flip { left: auto; right: 4px; }

@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' mdtile: blob: data:; img-src 'self' mdtile: blob: data: https://cyberjapandata.gsi.go.jp; style-src 'self' 'unsafe-inline'; script-src 'self'">
+<title>MapDetector</title>
+<link rel="stylesheet" href="vendor/leaflet/leaflet.css">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<nav id="menubar" class="menubar" hidden></nav>
+<div id="main">
+  <div id="map"></div>
+  <aside id="panel">
+    <section>
+      <h2>タイル</h2>
+      <div class="row">
+        <button id="btnOpenTiles" title="タイルフォルダ (z/x/y.png) を開く">フォルダを開く</button>
+        <button id="btnOpenTilesFallback" class="browser-only" title="ディレクトリ選択(全ファイル読込)">…(互換)</button>
+        <input type="file" id="inpTiles" webkitdirectory multiple hidden>
+      </div>
+      <div id="tileInfo" class="info">未読込 — フォルダをドラッグ&ドロップでも開けます</div>
+      <div class="row">
+        <label><input type="checkbox" id="chkTms"> TMS (Y反転)</label>
+        <label>不透明度 <input type="range" id="rngTileOpacity" min="0" max="1" step="0.05" value="1"></label>
+      </div>
+      <div class="row">
+        <label>背景 <select id="selBase">
+          <option value="">なし</option>
+          <option value="pale">地理院 淡色</option>
+          <option value="std">地理院 標準</option>
+          <option value="photo">地理院 写真</option>
+        </select></label>
+        <label>座標系 <select id="selZone"></select></label>
+      </div>
+    </section>
+
+    <section>
+      <h2>図面・レイヤー</h2>
+      <div class="row">
+        <button id="btnOpenDrawing">図面を開く</button>
+        <button id="btnOpenSima">線形SIMA</button>
+        <input type="file" id="inpDrawing" accept=".dxf,.geojson,.json,.png,.jpg,.jpeg,.sim,.xml" hidden>
+        <input type="file" id="inpSima" accept=".sim,.txt,.xml" hidden>
+      </div>
+      <div class="row small">
+        <label title="DXFのx→X(北), y→Y(東) として読む"><input type="checkbox" id="chkDxfSwap"> DXF XY入替</label>
+        <label>単位 <select id="selDxfScale"><option value="1">m</option><option value="0.001">mm</option><option value="0.01">cm</option></select></label>
+      </div>
+      <ul id="layerList" class="layers"></ul>
+    </section>
+
+    <section id="secAlignment">
+      <h2>線形 (横断線)</h2>
+      <div class="row"><label>路線 <select id="selRoute"></select></label>
+        <button id="btnNewRoute" title="取得点から線形(IP)を作成">取得点→IP</button></div>
+      <div class="grid2">
+        <label>測点間隔(m) <input type="number" id="numPitch" value="20" min="1" step="1"></label>
+        <label>中間点(m) <input type="number" id="numSub" value="0" min="0" step="1"></label>
+        <label>BP追加距離 <input type="number" id="numStart" value="0" step="0.01"></label>
+        <label>ラベル最小ズーム <input type="number" id="numLabelZoom" value="16" min="0" max="24" step="1"></label>
+        <label>左幅員(m) <input type="number" id="numLeft" value="5" min="0" step="0.1"></label>
+        <label>右幅員(m) <input type="number" id="numRight" value="5" min="0" step="0.1"></label>
+      </div>
+      <div class="row small">
+        <label><input type="checkbox" id="chkKey" checked> 主要点</label>
+        <label><input type="checkbox" id="chkEdges" checked> 幅員線</label>
+        <label><input type="checkbox" id="chkLabels" checked> 測点名</label>
+        <label><input type="checkbox" id="chkIpLine" checked> IP線</label>
+      </div>
+      <details>
+        <summary>IP表 (編集可)</summary>
+        <table class="tbl" id="tblIp"><thead><tr><th>点名</th><th>X</th><th>Y</th><th>R</th><th>A1</th><th>A2</th><th></th></tr></thead><tbody></tbody></table>
+        <div class="row"><button id="btnAddIp">行追加</button><button id="btnApplyIp">反映</button></div>
+      </details>
+      <div id="alignInfo" class="info"></div>
+    </section>
+
+    <section>
+      <h2>座標取得</h2>
+      <div class="row">
+        <button id="btnPick" class="toggle" title="P">取得モード</button>
+        <label title="F3"><input type="checkbox" id="chkSnap" checked> スナップ</label>
+        <label>許容 <input type="number" id="numSnapPx" value="12" min="2" max="40" style="width:3.5em">px</label>
+      </div>
+      <div class="row small snaps">
+        <label><input type="checkbox" data-snap="end" checked>端点</label>
+        <label><input type="checkbox" data-snap="mid" checked>中点</label>
+        <label><input type="checkbox" data-snap="inter" checked>交点</label>
+        <label><input type="checkbox" data-snap="center" checked>中心</label>
+        <label><input type="checkbox" data-snap="node" checked>点</label>
+        <label><input type="checkbox" data-snap="near" checked>線上</label>
+      </div>
+      <div class="row">
+        <button id="btnCopy">コピー</button><button id="btnCsv">CSV</button><button id="btnSimaOut">SIMA</button><button id="btnClear">全削除</button>
+      </div>
+      <div class="tblwrap"><table class="tbl" id="tblPts"><thead><tr><th>No</th><th>点名</th><th>X</th><th>Y</th><th>種別</th><th>測点/離れ</th><th></th></tr></thead><tbody></tbody></table></div>
+    </section>
+  </aside>
+</div>
+<footer id="status">
+  <span id="stCursor">—</span>
+  <span id="stSnap"></span>
+  <span id="stZoom"></span>
+  <span class="spacer"></span>
+  <span id="stUpdate"></span>
+  <span id="stVersion"></span>
+</footer>
+<div id="toast" hidden></div>
+<dialog id="dlgAbout"><form method="dialog"><h3>MapDetector</h3><p id="aboutText"></p><button>OK</button></form></dialog>
+
+<script src="vendor/leaflet/leaflet.js"></script>
+<script src="js/version.js"></script>
+<script src="js/menu-def.js"></script>
+<script src="js/jprcs.js"></script>
+<script src="js/alignment.js"></script>
+<script src="js/sima.js"></script>
+<script src="js/simaxml.js"></script>
+<script src="js/dxf.js"></script>
+<script src="js/snap.js"></script>
+<script src="js/tiles.js"></script>
+<script src="js/imageoverlay.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
