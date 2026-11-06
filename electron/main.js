@@ -229,6 +229,21 @@ async function detectTiles(dirPath) {
 // ---------------------------------------------------------------------------
 let mainWindow = null;
 
+// ウィンドウごとの未保存状態 {dirty, confirmed, prompting}
+const windowStates = new WeakMap();
+function winState(win) {
+  let st = windowStates.get(win);
+  if (!st) { st = { dirty: false, confirmed: false, prompting: false }; windowStates.set(win, st); }
+  return st;
+}
+
+// 未保存確認を経由せずにウィンドウを閉じる
+function forceClose(win) {
+  if (!win || win.isDestroyed()) return;
+  winState(win).confirmed = true;
+  win.close();
+}
+
 function createWindow() {
   const b = settings.windowBounds || {};
   mainWindow = new BrowserWindow({
@@ -257,7 +272,39 @@ function createWindow() {
   };
   mainWindow.on('resize', remember);
   mainWindow.on('move', remember);
-  mainWindow.on('close', () => { remember(); saveSettingsNow(); });
+  const win = mainWindow;
+  win.on('close', (e) => {
+    remember();
+    saveSettingsNow();
+    const st = winState(win);
+    if (!st.dirty || st.confirmed) return;
+    e.preventDefault();
+    if (st.prompting) return;
+    st.prompting = true;
+    dialog.showMessageBox(win, {
+      type: 'warning',
+      title: PRODUCT,
+      message: '保存されていない変更があります',
+      detail: '終了する前に変更を保存しますか?',
+      buttons: ['保存して終了', '保存せずに終了', 'キャンセル'],
+      defaultId: 0,
+      cancelId: 2,
+      noLink: true
+    }).then((r) => {
+      st.prompting = false;
+      if (win.isDestroyed()) return;
+      if (r.response === 1) {
+        st.confirmed = true;
+        win.close();
+      } else if (r.response === 0) {
+        // レンダラーが保存後に mdNative.closeWindow() を呼ぶ
+        win.webContents.send('menu', 'file.saveThenClose');
+      }
+    }).catch((err) => {
+      st.prompting = false;
+      console.error('close confirm failed:', err);
+    });
+  });
   mainWindow.on('closed', () => { mainWindow = null; });
 
   // 外部リンクは既定ブラウザで開く
@@ -279,21 +326,11 @@ function sendMenu(id) {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('menu', id);
 }
 
-function showAbout() {
-  dialog.showMessageBox(mainWindow, {
-    type: 'info',
-    title: 'バージョン情報',
-    message: `${PRODUCT} ${app.getVersion()}`,
-    detail: `Electron ${process.versions.electron}\nChrome ${process.versions.chrome}\nNode ${process.versions.node}\n\nhttps://github.com/sarumogu2013-glitch/MapDetector`,
-    buttons: ['OK']
-  });
-}
-
 function handleMenu(id) {
   const wc = mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : null;
   switch (id) {
-    case 'app.quit': app.quit(); break;
-    case 'help.about': showAbout(); break;
+    // 未保存確認を通すため、ウィンドウを閉じる (最後のウィンドウが閉じれば window-all-closed で終了)
+    case 'app.quit': if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close(); else app.quit(); break;
     case 'help.checkUpdate': checkForUpdates(true); break;
     case 'view.devtools': if (wc) wc.toggleDevTools(); break;
     case 'view.reload': if (wc) wc.reload(); break;
@@ -445,8 +482,32 @@ const OPEN_FILTERS = {
     { name: 'SIMA (CSV / JPGIS XML)', extensions: ['sim', 'xml', 'txt'] },
     { name: 'すべてのファイル', extensions: ['*'] }
   ],
+  project: [
+    { name: 'MapDetector プロジェクト', extensions: ['mdp'] },
+    { name: 'すべてのファイル', extensions: ['*'] }
+  ],
   any: [{ name: 'すべてのファイル', extensions: ['*'] }]
 };
+
+// 保存内容を Buffer に変換。string は utf8 (既定) / shift_jis (cp932)。
+// BOM は opts.bom が真のとき (bomDefault は opts.bom 未指定時の既定値)。
+function encodeContent(content, opts, bomDefault) {
+  if (typeof content === 'string') {
+    const enc = String(opts.encoding || 'utf8').toLowerCase().replace('-', '_');
+    if (enc === 'shift_jis' || enc === 'sjis' || enc === 'cp932') {
+      return require('iconv-lite').encode(content, 'cp932');
+    }
+    const wantBom = opts.bom !== undefined ? !!opts.bom : !!bomDefault;
+    return Buffer.from((wantBom ? '\ufeff' : '') + content, 'utf8');
+  }
+  if (content instanceof ArrayBuffer) return Buffer.from(content);
+  if (ArrayBuffer.isView(content)) return Buffer.from(content.buffer, content.byteOffset, content.byteLength);
+  return Buffer.alloc(0);
+}
+
+function fileResult(p, buf) {
+  return { path: p, name: path.basename(p), data: new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength) };
+}
 
 function senderWindow(e) {
   return BrowserWindow.fromWebContents(e.sender) || mainWindow;
@@ -489,36 +550,40 @@ function registerIpc() {
     const buf = await fsp.readFile(p);
     settings[key] = path.dirname(p);
     saveSettingsSoon();
-    return { path: p, name: path.basename(p), data: new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength) };
+    return fileResult(p, buf);
+  });
+
+  // ダイアログなしで読み込み (起動時に前回のプロジェクトを開く等)。存在しなければ null。
+  ipcMain.handle('file:read', async (_e, p) => {
+    if (typeof p !== 'string' || !p) return null;
+    let buf;
+    try { buf = await fsp.readFile(p); } catch (_) { return null; }
+    return fileResult(p, buf);
+  });
+
+  // ダイアログなしで書き込み (上書き保存)。失敗時は例外 (レンダラーでメッセージ表示)。
+  ipcMain.handle('file:write', async (_e, opts) => {
+    opts = opts || {};
+    if (typeof opts.path !== 'string' || !opts.path) throw new Error('保存先のパスが指定されていません');
+    const buf = encodeContent(opts.content, opts, false);
+    await fsp.writeFile(opts.path, buf);
+    return opts.path;
   });
 
   ipcMain.handle('file:save', async (e, opts) => {
     opts = opts || {};
     const defaultName = opts.defaultName || 'output.txt';
     const dir = settings['lastDir.save'];
+    let defaultPath;
+    if (typeof opts.defaultPath === 'string' && opts.defaultPath) defaultPath = opts.defaultPath;
+    else defaultPath = dir ? path.join(dir, defaultName) : defaultName;
     const r = await dialog.showSaveDialog(senderWindow(e), {
-      title: '保存',
-      defaultPath: dir ? path.join(dir, defaultName) : defaultName,
+      title: opts.title || '保存',
+      defaultPath,
       filters: Array.isArray(opts.filters) && opts.filters.length ? opts.filters : undefined
     });
     if (r.canceled || !r.filePath) return null;
-    const content = opts.content;
-    let buf;
-    if (typeof content === 'string') {
-      const enc = String(opts.encoding || 'utf8').toLowerCase().replace('-', '_');
-      if (enc === 'shift_jis' || enc === 'sjis' || enc === 'cp932') {
-        buf = require('iconv-lite').encode(content, 'cp932');
-      } else {
-        const wantBom = opts.bom !== undefined ? !!opts.bom : /\.csv$/i.test(r.filePath);
-        buf = Buffer.from((wantBom ? '﻿' : '') + content, 'utf8');
-      }
-    } else if (content instanceof ArrayBuffer) {
-      buf = Buffer.from(content);
-    } else if (ArrayBuffer.isView(content)) {
-      buf = Buffer.from(content.buffer, content.byteOffset, content.byteLength);
-    } else {
-      buf = Buffer.alloc(0);
-    }
+    const buf = encodeContent(opts.content, opts, /\.csv$/i.test(r.filePath));
     await fsp.writeFile(r.filePath, buf);
     settings['lastDir.save'] = path.dirname(r.filePath);
     saveSettingsSoon();
@@ -526,6 +591,22 @@ function registerIpc() {
   });
 
   ipcMain.on('app:version', (e) => { e.returnValue = app.getVersion(); });
+
+  ipcMain.on('app:setDirty', (e, dirty) => {
+    const win = senderWindow(e);
+    if (!win || win.isDestroyed()) return;
+    const st = winState(win);
+    st.dirty = !!dirty;
+    if (st.dirty) st.confirmed = false;
+  });
+
+  ipcMain.on('app:close', (e) => forceClose(senderWindow(e)));
+
+  ipcMain.handle('shell:openExternal', async (_e, url) => {
+    if (typeof url !== 'string' || !/^https:\/\//i.test(url)) return false;
+    await shell.openExternal(url);
+    return true;
+  });
 
   ipcMain.handle('update:check', () => checkForUpdates(true));
 

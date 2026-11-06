@@ -1,0 +1,82 @@
+/* MD.Grid — 表エディタ (js/grid.js)。行高さ 22px は grid.js の ROW_H と一致させること */
+.md-grid {
+  --md-grid-line: #d4d8de;
+  --md-grid-head: #eef0f3;
+  --md-grid-head-sel: #d5dcea;
+  --md-grid-sel: #dbe8ff;
+  --md-grid-sel-blur: #e8eaee;
+  --md-grid-active: #1a66e0;
+  --md-grid-invalid-bg: #fde8e8;
+  --md-grid-invalid-fg: #c81e1e;
+  position: relative;
+  font: 12px/1 "Segoe UI", "Yu Gothic UI", "Meiryo", system-ui, sans-serif;
+  color: #1d2330;
+  background: #fff;
+  border: 1px solid var(--md-grid-line);
+  user-select: none;
+  -webkit-user-select: none;
+}
+.md-grid-scroll { position: relative; overflow: auto; max-height: 300px; background: #fff; }
+.md-grid-inner { position: relative; }
+.md-grid-row { position: absolute; left: 0; display: flex; height: 22px; white-space: nowrap; }
+.md-grid-head { position: sticky; top: 0; z-index: 3; background: var(--md-grid-head); }
+.md-grid-body { position: relative; }
+
+.md-grid-cell, .md-grid-ch, .md-grid-rh, .md-grid-corner {
+  box-sizing: border-box; flex: none; height: 22px; line-height: 21px; padding: 0 4px;
+  border-right: 1px solid var(--md-grid-line); border-bottom: 1px solid var(--md-grid-line);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.md-grid-ch, .md-grid-corner { background: var(--md-grid-head); font-weight: 600; color: #374151; text-align: center; cursor: default; }
+.md-grid-corner { position: sticky; left: 0; z-index: 4; cursor: pointer; }
+.md-grid-ch.md-grid-ch-sel { background: var(--md-grid-head-sel); }
+.md-grid-rh {
+  position: sticky; left: 0; z-index: 1; background: var(--md-grid-head); color: #6b7280;
+  text-align: right; cursor: default; font-variant-numeric: tabular-nums;
+}
+.md-grid-rh.md-grid-rh-sel { background: var(--md-grid-head-sel); color: #1d2330; }
+.md-grid-cell { background: #fff; cursor: cell; }
+.md-grid-num { text-align: right; font-variant-numeric: tabular-nums; }
+.md-grid-ch.md-grid-num { text-align: center; }
+.md-grid-ro { color: #6b7280; background: #fafafa; }
+.md-grid-newrow .md-grid-cell { background: #fcfcfd; }
+.md-grid-newrow .md-grid-rh { color: #9ca3af; }
+
+.md-grid-cell.md-grid-sel { background: var(--md-grid-sel-blur); }
+.md-grid-focused .md-grid-cell.md-grid-sel { background: var(--md-grid-sel); }
+.md-grid-cell.md-grid-active { background: #fff; box-shadow: inset 0 0 0 2px #9aa3b2; }
+.md-grid-focused .md-grid-cell.md-grid-active { box-shadow: inset 0 0 0 2px var(--md-grid-active); }
+.md-grid-cell.md-grid-invalid { color: var(--md-grid-invalid-fg); background: var(--md-grid-invalid-bg); }
+.md-grid-cell.md-grid-invalid.md-grid-active { background: var(--md-grid-invalid-bg); }
+
+/* 隠し入力 (常時フォーカス、IME/クリップボード受け) → 編集中はセル上のエディタとして表示 */
+.md-grid-input {
+  position: absolute; z-index: 2; margin: 0; padding: 0 3px; box-sizing: border-box;
+  border: 0; outline: none; resize: none; overflow: hidden; white-space: pre;
+  font: inherit; line-height: 20px; color: transparent; background: transparent;
+  opacity: 0; pointer-events: none; caret-color: transparent;
+}
+.md-grid-input.md-grid-editing {
+  opacity: 1; pointer-events: auto; color: #1d2330; background: #fff; caret-color: auto;
+  border: 2px solid var(--md-grid-active); line-height: 18px; padding: 0 2px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .18); user-select: text; -webkit-user-select: text;
+}
+
+.md-grid-menu {
+  position: fixed; z-index: 10000; min-width: 170px; padding: 4px 0;
+  background: #fff; border: 1px solid #c9ced6; border-radius: 4px; box-shadow: 0 4px 14px rgba(0, 0, 0, .18);
+  font: 12px "Segoe UI", "Yu Gothic UI", "Meiryo", system-ui, sans-serif; color: #1d2330; user-select: none;
+}
+.md-grid-menu-item { display: flex; justify-content: space-between; gap: 16px; padding: 5px 14px; cursor: default; }
+.md-grid-menu-item:hover { background: #eef2ff; }
+.md-grid-menu-disabled { color: #9ca3af; }
+.md-grid-menu-disabled:hover { background: transparent; }
+.md-grid-menu-key { color: #9ca3af; }
+.md-grid-menu-sep { height: 1px; margin: 4px 0; background: #e5e7eb; }
+
+.md-grid-toast {
+  position: absolute; left: 50%; bottom: 8px; transform: translateX(-50%); z-index: 5;
+  max-width: 90%; padding: 5px 10px; border-radius: 4px; background: rgba(29, 35, 48, .9); color: #fff;
+  font-size: 12px; line-height: 1.4; pointer-events: none; white-space: normal;
+}
+.md-grid-toast[hidden] { display: none; }

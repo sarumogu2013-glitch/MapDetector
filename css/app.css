@@ -78,3 +78,27 @@ details summary { cursor: pointer; color: var(--muted); margin: 4px 0; }
 .dropping #map { outline: 4px dashed var(--accent); outline-offset: -4px; }
 .electron .browser-only { display: none; }
 .md-sta-label.flip { left: auto; right: 4px; }
+
+/* バージョン情報 (中央配置) */
+dialog.about { border: 0; border-radius: 10px; padding: 24px 32px 20px; min-width: 340px; text-align: center; box-shadow: 0 12px 40px rgba(0,0,0,.25); }
+dialog.about::backdrop { background: rgba(15,23,42,.35); }
+dialog.about form { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+dialog.about h3 { margin: 4px 0 2px; font-size: 20px; }
+dialog.about p { margin: 2px 0; }
+.about-logo { font-size: 40px; line-height: 1; }
+.about-ver { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.about-ed, .about-copy { color: var(--muted); font-size: 12px; }
+.about-desc { margin: 8px 0 !important; }
+.about-links { margin: 8px 0 !important; line-height: 1.9; }
+dialog.about a { color: var(--accent); text-decoration: none; }
+dialog.about a:hover { text-decoration: underline; }
+dialog.about button { margin-top: 12px; min-width: 96px; }
+
+/* 下部の表編集ドック */
+#dock { height: 300px; min-height: 120px; display: flex; flex-direction: column; background: #fff; border-top: 2px solid var(--accent); resize: vertical; overflow: hidden; }
+#dock[hidden] { display: none; }
+.dock-head { display: flex; align-items: center; gap: 8px; padding: 4px 10px; border-bottom: 1px solid var(--line); background: #f8fafc; }
+.dock-head .spacer { flex: 1; }
+.dock-hint { color: var(--muted); font-size: 11px; }
+#dockGrid { flex: 1; min-height: 0; overflow: hidden; }
+.md-hl { width: 22px; height: 22px; margin: -11px 0 0 -11px; border: 3px solid #f59e0b; border-radius: 50%; box-shadow: 0 0 0 3px rgba(245,158,11,.35); pointer-events: none; }
