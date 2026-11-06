@@ -311,13 +311,26 @@
     function fill() { var p = WEB_PRESETS[+sel.value]; if (!p) return; $('webName').value = p.name; $('webUrl').value = p.url; $('webMinZ').value = p.minZ; $('webMaxZ').value = p.maxZ; }
     sel.onchange = fill; fill();
     $('btnAddWeb').onclick = function () { $('dlgWeb').showModal(); };
-    $('webOk').onclick = function (e) {
+    $('webAuto').onchange = function () { $('webMinZ').disabled = $('webMaxZ').disabled = this.checked; };
+    $('webOk').onclick = async function (e) {
       e.preventDefault();
       try {
-        var p = WEB_PRESETS[+sel.value] || {};
-        addWebTileLayer({ name: $('webName').value, url: $('webUrl').value.trim(), minZ: +$('webMinZ').value || 0, maxZ: +$('webMaxZ').value || 18, tms: $('webTms').checked, attribution: p.attribution || '' });
+        var p = WEB_PRESETS[+sel.value] || {}, url = $('webUrl').value.trim(), tms = $('webTms').checked;
+        var minZ = +$('webMinZ').value || 0, maxZ = +$('webMaxZ').value || 18;
+        if (!/^https?:\/\//.test(url) || url.indexOf('{z}') < 0) throw new Error('URL は https://…/{z}/{x}/{y}.png の形式で指定してください');
+        if ($('webAuto').checked) {
+          // 自動判定: 今の表示位置のタイルを z0〜22 まで取りに行き、実際に返ってくる範囲を使う
+          $('webOk').disabled = true; $('webStatus').textContent = 'ズーム範囲を自動判定中…';
+          var c = map.getCenter(), pr = await MD.Tiles.probeWebZoom({ url: url, tms: tms, subdomains: p.subdomains }, c.lat, c.lng, 22, 6000);
+          $('webOk').disabled = false;
+          if (!pr) throw new Error('今の表示位置ではタイルを取得できませんでした。地図を対象地域に移動するか、URL を確認してください');
+          minZ = pr.minZ; maxZ = pr.maxZ; $('webMinZ').value = minZ; $('webMaxZ').value = maxZ;
+          $('webStatus').textContent = '';
+          toast('ズーム範囲を自動判定: z' + minZ + '〜z' + maxZ + (pr.ok.length < maxZ - minZ + 1 ? ' (途中の抜けは前後のズームで補完)' : ''), 5000);
+        }
+        addWebTileLayer({ name: $('webName').value, url: url, minZ: minZ, maxZ: maxZ, tms: tms, attribution: p.attribution || '' });
         $('dlgWeb').close();
-      } catch (err) { toast(err.message, 5000); }
+      } catch (err) { $('webOk').disabled = false; $('webStatus').textContent = ''; toast(err.message, 6000); }
     };
   })();
   function fitTiles(autoZone, only) {

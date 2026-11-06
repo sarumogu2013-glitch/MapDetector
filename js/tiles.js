@@ -153,12 +153,16 @@
       var self = this, fy = this._tms ? Math.pow(2, z) - 1 - y : y;
       return Promise.resolve(this._fetch(z, x, fy)).then(function (u) {
         if (!u) return null;
-        return new Promise(function (res) {
-          var img = new Image(); img.decoding = 'async';
-          img.onload = function () { if (u.revoke) u.revoke(); res(img); };
-          img.onerror = function () { if (u.revoke) u.revoke(); res(null); };
-          img.src = u.url || u;
-        });
+        var src = u.url || u, cors = self.options.parentFallback;   // Web タイルは CORS 付きで読む (非対応の配信元は付けずに再試行)
+        function load(withCors) {
+          return new Promise(function (res) {
+            var img = new Image(); img.decoding = 'async'; if (withCors) img.crossOrigin = 'anonymous';
+            img.onload = function () { res(img); };
+            img.onerror = function () { res(null); };
+            img.src = src;
+          });
+        }
+        return load(cors).then(function (im) { return im || !cors ? im : load(false); }).then(function (im) { if (u.revoke) u.revoke(); return im; });
       });
     },
     /** (z, x, y) の画像 (Image または Canvas、無ければ null) */
@@ -170,7 +174,19 @@
       var lv = this._lv, finer = null, coarser = null;
       for (var i = 0; i < lv.length; i++) { if (lv[i] > z && finer == null) finer = lv[i]; if (lv[i] < z) coarser = lv[i]; }
       var p;
-      if (this._set.has(z)) p = this._native(z, x, y);
+      if (this._set.has(z)) {
+        p = this._native(z, x, y);
+        // Web タイル: その場所にタイルが無ければ (404 等)、1 つ粗いズームの画像を拡大して埋める
+        if (this.options.parentFallback && z > lv[0]) p = p.then(function (im) {
+          if (im) return im;
+          return self._get(z - 1, x >> 1, y >> 1).then(function (pa) {
+            if (!pa) return null;
+            var w = (pa.naturalWidth || pa.width) / 2, cv = document.createElement('canvas'); cv.width = cv.height = 256;
+            cv.getContext('2d').drawImage(pa, (x & 1) * w, (y & 1) * w, w, w, 0, 0, 256, 256);
+            return cv;
+          });
+        });
+      }
       else if (finer != null && (coarser == null || finer - z <= 3)) {
         // 1 段細かいズームの 4 枚を合成して縮小 (その 4 枚も必要なら同じ方法で作る)
         p = Promise.all([[0, 0], [1, 0], [0, 1], [1, 1]].map(function (d) { return self._get(z + 1, 2 * x + d[0], 2 * y + d[1]); })).then(function (ch) {
@@ -214,8 +230,9 @@
       minZoom: Math.max(0, lv[0] - 6), bounds: boundsOf(info, tms) || undefined }, extra || {});
     var layer;
     if (opened.kind === 'web') {
-      // Web タイル (XYZ テンプレート URL)。crossOrigin で読み、タイル/GeoTIFF 生成時に画素を読めるようにする
-      layer = L.tileLayer(info.url, L.extend(opts, { subdomains: info.subdomains || 'abc', crossOrigin: 'anonymous', errorTileUrl: TRANSPARENT, attribution: info.attribution || '', bounds: undefined }));
+      // Web タイル: 指定ズーム範囲で取得し、無い場所は粗いズームを拡大して補う (最大ズーム超は拡大表示)
+      layer = new PyramidTileLayer(function (z, x, y) { return webUrl(info, z, x, y); }, { levels: lv }, false,
+        L.extend(opts, { minNativeZoom: undefined, minZoom: Math.max(0, lv[0] - 2), bounds: undefined, attribution: info.attribution || '', parentFallback: true }));
     } else if (!(extra && extra.minNativeZoom != null)) {
       // ローカルタイル: 無いズームを補うピラミッド表示 (最小ズーム未満は合成・縮小、最大ズーム超は拡大)
       var fetchUrl;
@@ -269,13 +286,36 @@
     var sd = info.subdomains || 'abc';
     return info.url.replace('{z}', z).replace('{x}', x).replace('{-y}', Math.pow(2, z) - 1 - y).replace('{y}', y).replace('{s}', sd[Math.abs(x + y) % sd.length]);
   }
+  /**
+   * Web タイルの提供ズーム範囲を自動判定: 指定地点のタイルを z0〜zmax まで並行に取りに行き、読めたズームの最小〜最大を返す。
+   * 戻り値 Promise<{ minZ, maxZ, ok: [z...] } | null>
+   */
+  function probeWebZoom(info, lat, lng, zmax, timeoutMs) {
+    zmax = zmax == null ? 22 : zmax;
+    var tries = [];
+    for (var z = 0; z <= zmax; z++) (function (z) {
+      var n = Math.pow(2, z), x = Math.floor((lng + 180) / 360 * n), r = lat * Math.PI / 180;
+      var y = Math.floor((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * n);
+      if (info.tms) y = n - 1 - y;
+      tries.push(new Promise(function (res) {
+        var img = new Image(), done = false, fin = function (v) { if (!done) { done = true; res(v ? z : null); } };
+        img.onload = function () { fin(img.naturalWidth > 0); }; img.onerror = function () { fin(false); };
+        setTimeout(function () { fin(false); }, timeoutMs || 6000);
+        img.src = webUrl(info, z, x, y);
+      }));
+    })(z);
+    return Promise.all(tries).then(function (r) {
+      var ok = r.filter(function (v) { return v != null; });
+      return ok.length ? { minZ: ok[0], maxZ: ok[ok.length - 1], ok: ok } : null;
+    });
+  }
   /** Web タイルの「開いたタイル」情報を作る */
   function webOpened(o) {
     var lv = []; for (var z = o.minZ; z <= o.maxZ; z++) lv.push(z);
     return { kind: 'web', info: { url: o.url, levels: lv, tms: !!o.tms, ext: 'web', subdomains: o.subdomains, attribution: o.attribution || '' } };
   }
 
-  root.MD.Tiles = { makeSource: makeSource, webOpened: webOpened, webUrl: webUrl,
+  root.MD.Tiles = { makeSource: makeSource, webOpened: webOpened, webUrl: webUrl, probeWebZoom: probeWebZoom,
     detectFromHandle: detectFromHandle, detectFromFileList: detectFromFileList,
     createLayer: createLayer, boundsOf: boundsOf, tile2lat: tile2lat, tile2lng: tile2lng
   };
