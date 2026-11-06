@@ -351,6 +351,10 @@
     S.route.cur = i; $('selRoute').value = i;
     var r = S.route.list[i];
     S.route.ips = r ? r.ips.map(function (p) { return { name: p.name || '', e: +p.e, n: +p.n, R: +p.R || 0, A1: +p.A1 || 0, A2: +p.A2 || 0 }; }) : [];
+    // SIMA にある追加距離・測点間隔・幅員を設定 (追加距離がある線形は測点を追加距離で表記)
+    if (r && r.startChainage != null) { $('numStart').value = r.startChainage; $('selStaFmt').value = 'ch'; }
+    if (r && r.pitch) $('numPitch').value = r.pitch;
+    if (r && r.widths) { if (r.widths.left != null) $('numLeft').value = r.widths.left; if (r.widths.right != null) $('numRight').value = r.widths.right; }
     renderIpTable(); rebuildRoute();
   }
   function renderIpTable() {
@@ -371,7 +375,7 @@
     renderIpTable();
   };
   $('btnApplyIp').onclick = function () { rebuildRoute(); };
-  ['numPitch', 'numSub', 'numStart', 'numLeft', 'numRight', 'chkKey', 'chkEdges', 'chkLabels', 'chkIpLine', 'numLabelZoom'].forEach(function (id) {
+  ['numPitch', 'numSub', 'numStart', 'numLeft', 'numRight', 'chkKey', 'chkEdges', 'chkLabels', 'chkIpLine', 'numLabelZoom', 'selStaFmt'].forEach(function (id) {
     $(id).addEventListener('change', rebuildRoute);
   });
   function routeFromPoints() {
@@ -384,7 +388,9 @@
   }
   $('btnNewRoute').onclick = routeFromPoints;
 
+  function fmtCh(ch) { var r = Math.round(ch * 100) / 100; return Math.abs(r - Math.round(r)) < 1e-9 ? String(Math.round(r)) : r.toFixed(2); }
   function staLabel(ch, pitch) {
+    if ($('selStaFmt').value === 'ch') return fmtCh(ch);
     var k = Math.floor((ch + 1e-6) / pitch), rem = ch - k * pitch;
     return 'No.' + k + (rem > 0.005 ? '+' + rem.toFixed(2) : '');
   }
@@ -400,6 +406,9 @@
     var al;
     try { al = MD.Alignment.build(R.ips, {}); } catch (e) { $('alignInfo').textContent = '線形計算エラー: ' + e.message; return; }
     var st = MD.Alignment.stations(al, { pitch: pitch, sub: +$('numSub').value || 0, startChainage: +$('numStart').value || 0, includeKeyPoints: $('chkKey').checked, endInclude: true });
+    if ($('selStaFmt').value === 'ch') st.forEach(function (x) {
+      x.label = (x.kind === 'key' ? x.label.split(' ')[0] + ' ' : '') + fmtCh(x.chainage);
+    });
     var bones = MD.Alignment.fishbone(al, st, { left: +$('numLeft').value || 0, right: +$('numRight').value || 0 });
     R.al = al; R.stations = st; R.bones = bones; R.pitch = pitch;
 
@@ -453,8 +462,19 @@
     for (var j = 0; j <= n2; j++) { var s = Math.min(al.length, j * step), q2 = MD.Alignment.pointAt(al, s); sArr.push(s); pArr.push(q2); }
     R.proj = { s: sArr, p: pArr, start: +$('numStart').value || 0 };
 
-    var w = (al.warnings || []);
-    $('alignInfo').textContent = '延長 ' + al.length.toFixed(3) + ' m / 測点 ' + st.length + ' / 主要点 ' + al.keyPoints.length + (w.length ? '\n⚠ ' + w.join('\n⚠ ') : '');
+    var w = (al.warnings || []).slice(), src = S.route.list[S.route.cur], chk = '';
+    // SIMA の中心線測点・幅杭座標と照合
+    if (src && src.check && src.check.length) {
+      var st0 = +$('numStart').value || 0, mx = 0, worst = '', n = 0;
+      src.check.forEach(function (c) {
+        if (!c.sideKnown) return;
+        var q = MD.Alignment.pointAt(al, c.chainage - st0);
+        var d = Math.hypot(q.e - Math.sin(q.h) * c.off - c.e, q.n + Math.cos(q.h) * c.off - c.n);
+        n++; if (d > mx) { mx = d; worst = c.name; }
+      });
+      if (n) chk = '\n照合: SIMA の測点・幅杭 ' + n + '点 最大差 ' + (mx * 1000).toFixed(1) + ' mm' + (mx > 0.01 ? ' (' + worst + ') ⚠ 不一致' : ' ✓');
+    }
+    $('alignInfo').textContent = '延長 ' + al.length.toFixed(3) + ' m / 測点 ' + st.length + ' / 主要点 ' + al.keyPoints.length + chk + (w.length ? '\n⚠ ' + w.join('\n⚠ ') : '');
     refreshPoints();
   }
   // 測点ラベル (横断線方向に回転)。ズームに応じて間引き (主要点は常に表示)
