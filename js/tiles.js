@@ -253,7 +253,8 @@
       var n = opts.preloadTiles;
       layer._getTiledPixelBounds = function (center) {
         var b = L.GridLayer.prototype._getTiledPixelBounds.call(this, center);
-        var px = this.getTileSize().x * this._map.getZoomScale(this._map.getZoom(), this._tileZoom) * n;
+        // b は _tileZoom の画素座標なので、N タイル分はそのまま tileSize * N (表示ズームとの倍率を掛けると超拡大時に範囲が数億タイルに膨らみ固まる)
+        var px = this.getTileSize().x * n;
         return new L.Bounds(b.min.subtract([px, px]), b.max.add([px, px]));
       };
     }
